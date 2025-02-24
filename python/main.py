@@ -6,7 +6,10 @@ import sys
 import math
 
 def main():
-    ...
+    input_parameter()
+    input_data()
+    generate_psf()
+    
 
 def input_parameter():
     
@@ -58,6 +61,12 @@ def input_data():
     offset = 100.0
     noise = 2.3
     offset_map, error_map, gain_map = get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image_size_y)
+    raw_image_with_padding = add_padding_reflective_BC(input_raw_image)
+    gain_map_with_padding = add_padding_reflective_BC(gain_map)
+    offset_map_with_padding = add_padding_reflective_BC(offset_map)
+    error_map_with_padding = add_padding_reflective_BC(error_map)
+
+
 
 def generate_psf():
     ...
@@ -77,26 +86,44 @@ def get_camera_calibration_data(gain, offset, noise, raw_img_size_x, raw_img_siz
 
     return offset_map, error_map, gain_map
 
-def add_padding_reflective_BC(input_img):
+def add_padding_reflective_BC(input_img, padding_size):
 
+    input_img = np.array(input_img)
+    size_x = np.size(input_img)[0]
+    size_y = np.size(input_img)[1]
+    
+    img = np.zeros(3*size_x, 3*size_y)
+    img[size_x:2*size_x-1,size_y:2*size_y-1] = input_img 
+    img[0:size_x-1,size_y:2*size_y-1]= np.flip(input_img,0)
+    img[2*size_x:3*size_x-1,size_y:2*size_y-1]= np.flip(input_img,0)
+    img[size_x:2*size_x-1,0:size_y-1]= np.flip(input_img,1)
+    img[size_x:2*size_x-1,2*size_y:3*size_y-1]= np.flip(input_img,1)
+    img[0:size_x-1,0:size_y-1]= np.flip(np.flip(input_img,0),1)
+    img[0:size_x-1,2*size_y:3*size_y-1]= np.flip(np.flip(input_img,0),1)
+    img[2*size_x:3*size_x-1,0:size_y-1]= np.flip(np.flip(input_img,0),1)
+    img[2*size_x:3*size_x-1,2*size_y:3*size_y-1]= np.flip(np.flip(input_img,0),1)
+    return img[size_x-padding_size:2*size_x+padding_size-1, size_y-padding_size:2*size_y+padding_size-1]
 
-	size_x = np.size(input_img)[0]
-	size_y = np.size(input_img)[1]
+def apply_reflective_BC_object(object, intermediate_img, padding_size)
 
-	img = np.zeros(3*size_x, 3*size_y)
-	img[size_x+1:end-size_x,size_y+1:end-size_y] = input_img 
-	img[1:size_x,
-			size_y+1:end-size_y] .= input_img[end:-1:1, :] 
-	img[end-size_x+1:end,
-			size_y+1:end-size_y] .= input_img[end:-1:1, :] 
-	img[size_x+1:end-size_x,
-			1:size_y] .= input_img[:, end:-1:1] 
-	img[size_x+1:end - size_x,
-        end-size_y+1:end] .= input_img[:, end:-1:1] 
-	img[1:size_x,1:size_y] .= input_img[end:-1:1, end:-1:1] 
-	img[1:size_x,end-size_y+1:end] .= input_img[end:-1:1, end:-1:1] 
-	img[end-size_x+1:end,1:size_y] .= input_img[end:-1:1, end:-1:1] 
-	img[end-size_x+1:end,end-size_y+1:end] .= input_img[end:-1:1, end:-1:1] 
+	size_x = np.size(object)[0] - 2*padding_size
+	size_y = np.size(object)[1] - 2*padding_size
 
-	return img[size_x-padding_size+1:2*size_x+padding_size, size_y-padding_size+1:2*size_y+padding_size]
-end
+	intermediate_img[size_x:np.size(intermediate_img,1)-size_x-1,size_y:np.size(intermediate_img,1)-size_y-1] = object[padding_size+1:end-padding_size, padding_size+1:end-padding_size] 
+	intermediate_img[1:size_x,
+			    size_y+1:end-size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, :] 
+	intermediate_img[end-size_x+1:end,
+			    size_y+1:end-size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, :] 
+	intermediate_img[size_x+1:end-size_x,
+			    1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][:, end:-1:1] 
+	intermediate_img[size_x+1:end - size_x,
+			    end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][:, end:-1:1] 
+	intermediate_img[1:size_x,1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
+	intermediate_img[1:size_x,end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
+	intermediate_img[end-size_x+1:end,1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
+	intermediate_img[end-size_x+1:end,end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
+
+	object .= intermediate_img[size_x-padding_size+1:2*size_x+padding_size, 
+				   size_y-padding_size+1:2*size_y+padding_size]
+
+	return nothing
