@@ -203,15 +203,30 @@ def incoherent_PSF_airy_disk(x_c, x_e, light_wavelength, numerical_aperture):
     f_number = 1/(2*numerical_aperture) ##approx
     return (jinc(np.linalg.norm(x_c - x_e)/(light_wavelength*f_number)))^2
 
+def incoherent_PSF_gaussian(x_c, x_e, sigma):
+    x_c = np.array(x_c)
+    x_e = np.array(x_e)
+    return math.exp(-np.linalg.norm(x_c-x_e)^2/(2.0*sigma^2)) /(math.sqrt(2.0*math.pi) * sigma)^(np.shape(x_e)[0])
+
 def jinc(x):
-    """
+    '''
     计算 Jinc 函数：jinc(x) = J₁(x) / x
     注意：当 x = 0 时，J₁(x) / x 的值为 1/2。
-    """
+    '''
     if x == 0:
         return 0.5  # 数学上，jinc(0) = 1/2
     else:
         return j1(x) / x
+
+def MTF_air_disk(f_vector, light_wavelength, numerical_aperture)
+		f_number = 1/(2*numerical_aperture) ##approx
+		highest_transmitted_frequency = 1.0 / (light_wavelength*f_number) 
+		norm_f = np.linalg.norm(f_vector) / highest_transmitted_frequency
+		if norm_f < 1.0:
+			mtf = 2.0/np.pi * (math.acos(norm_f) - norm_f*math.sqrt(1 - norm_f^2))
+		elif norm_f >= 1.0:
+			mtf = 0.0
+		return mtf
 
 def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera):
 
@@ -235,40 +250,22 @@ def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, 
         for j in range(raw_image_size_y + 2*inference.padding_size):
             for i in range(raw_image_size_y + 2*inference.padding_size):
                 x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
-                psf_on_grid[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
- 		end
- 	end
- 	normalization = sum(psf_on_grid) * dx^2
- 	psf_on_grid = psf_on_grid ./ normalization
-	intermediate_img = fftshift(fft(ifftshift(psf_on_grid)))
+                psf_on_grid[i, j] =  incoherent_PSF_airy_disk([0.0, 0.0], x_e, optical_system.light_wavelength, optical_system.numerical_aperture)
+ 		
+        normalization = np.sum(psf_on_grid) * camera.dx^2
+        psf_on_grid = psf_on_grid / normalization
+        intermediate_img = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(psf_on_grid)))
 
-	function MTF(f_vector::Vector{Float64})
-		f_number::Float64 = 1/(2*numerical_aperture) ##approx
-		highest_transmitted_frequency = 1.0 / (light_wavelength*f_number) 
-		norm_f = norm(f_vector) / highest_transmitted_frequency
-		if norm_f < 1.0
-			mtf = 2.0/pi * (acos(norm_f) - norm_f*sqrt(1 - norm_f^2))
-		elseif norm_f > 1.0
-			mtf = 0.0
-		end
-		return mtf
-	end
+        for j in range(raw_image_size_y + 2*inference.padding_size):
+            for i in range(raw_image_size_y + 2*inference.padding_size):
+                mtf_on_grid[i, j] = MTF_air_disk([f_corrected_grid_1D_x[i], f_corrected_grid_1D_y[j]], optical_system.light_wavelength, optical_system.numerical_aperture)
+                if mtf_on_grid[i, j] == 0.0:
+                    intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
 
-	for j in 1:raw_img_size_y + 2*padding_size
-		for i in 1:raw_img_size_x + 2*padding_size
-				mtf_on_grid[i, j] = MTF([f_corrected_grid_1D_x[i], f_corrected_grid_1D_y[j]]) 
-				if mtf_on_grid[i, j] == 0.0
-					intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
-				end
-		end
-	end
-	const FFT_point_spread_function::Matrix{ComplexF64} = ifftshift(intermediate_img) 
+        FFT_point_spread_function = np.fft.ifftshift(intermediate_img) 
 
-elseif psf_type == "gaussian"
-	function incoherent_PSF(x_c::Vector{Float64}, x_e::Vector{Float64})
-		return exp(-norm(x_c-x_e)^2/(2.0*sigma^2)) /
-					(sqrt(2.0*pi) * sigma)^(size(x_e)[1])
-	end
+    elif OpticalSystem.psf_type == "gaussian":
+	
 	for j in 1:raw_img_size_y + 2*padding_size
 		for i in 1:raw_img_size_x + 2*padding_size
 			x_e::Vector{Float64} = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
