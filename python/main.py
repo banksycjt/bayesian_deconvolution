@@ -4,15 +4,70 @@ import cv2
 import os
 import sys
 import math
+import multiprocessing
+from scipy.special import j1
+
+class OpticalSystem:
+    def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
+        self.psf_type = psf_type
+        self.numerical_aperture = numerical_aperture
+        self.magnification = magnification
+        self.light_wavelength = light_wavelength
+        self.abbe_diffraction_limit = abbe_diffraction_limit
+        self.f_diffraction_limit = f_diffraction_limit
+        self.sigma = sigma
+
+class Camera:
+    def __init__(self, camera_pixel_size, physical_pixel_size, dx, gain, offset, noise, noise_maps_available):
+        self.camera_pixel_size = camera_pixel_size
+        self.physical_pixel_size = physical_pixel_size
+        self.dx = dx
+        self.gain = gain
+        self.offset = offset
+        self.noise = noise
+        self.noise_maps_available = noise_maps_available
+
+class Inference:
+    def __init__(self, padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency):
+        self.padding_size = padding_size
+        self.half_padding_size = half_padding_size
+        self.covariance_object = covariance_object
+        self.conc_parameter = conc_parameter
+        self.n_procs_per_dim_x = n_procs_per_dim_x
+        self.n_procs_per_dim_y = n_procs_per_dim_y
+        self.total_draws = total_draws
+        self.chain_burn_in_period = chain_burn_in_period
+        self.chain_starting_temperature = chain_starting_temperature
+        self.chain_time_constant = chain_time_constant
+        self.annealing_starting_temperature = annealing_starting_temperature
+        self.annealing_time_constant = annealing_time_constant
+        self.annealing_burn_in_period = annealing_burn_in_period
+        self.annealing_frequency = annealing_frequency
+        self.averaging_frequency = averaging_frequency
+        self.plotting_frequency = plotting_frequency
+
 
 def main():
-    input_parameter()
-    input_data()
-    generate_psf()
+
+    optical_system, camera, inference, raw_image_path = input_parameter()
+    raw_image_size_x,raw_image_size_y = input_data(raw_image_path)
+    print("Adding processors...")
+    pool = multiprocessing.Pool(processes=inference.n_procs_per_dim_x*inference.n_procs_per_dim_y)
+    print("Processors added.")
+    sub_raw_img_size_x = raw_image_size_x/inference.n_procs_per_dim_x
+    sub_raw_img_size_y = raw_image_size_y/inference.n_procs_per_dim_y
+
+    # Generate PSF
+    generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera)
+
+
+    return None
     
 
 def input_parameter():
     
+    raw_image_path = ""+"raw_image.tif"
+
     # Optical Parameters
     psf_type = "airy_disk" 
     numerical_aperture = 1.3
@@ -52,9 +107,17 @@ def input_parameter():
     averaging_frequency = 10
     plotting_frequency = 10
 
-def input_data():
+    optical_system = OpticalSystem(psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma)
+    camera = Camera(camera_pixel_size, physical_pixel_size, dx, gain, offset, noise, noise_maps_available)
+    inference = Inference(padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency)
 
-    input_raw_image = get_input_raw_image()
+    return optical_system, camera, inference, raw_image_path
+
+def input_data(raw_image_path):
+
+    input_raw_image = cv2.imread(raw_image_path, cv2.IMREAD_UNCHANGED)
+    input_raw_image = input_raw_image.astype(np.float64)    
+
     raw_image_size_x = input_raw_image.shape[0]
     raw_image_size_y = input_raw_image.shape[1]
     gain = 1.957
@@ -66,17 +129,8 @@ def input_data():
     offset_map_with_padding = add_padding_reflective_BC(offset_map)
     error_map_with_padding = add_padding_reflective_BC(error_map)
 
-
-
-def generate_psf():
-    ...
-
-def get_input_raw_image():
-    
-    file_name = ""+"raw_image.tif"
-    img = cv2.imread(file_name, cv2.IMREAD_UNCHANGED)
-    img = img.astype(np.float64)
-    return img
+    median_photon_count = np.ones((raw_image_size_x,raw_image_size_y))*np.median(abs((input_raw_image - np.ones((raw_image_size_x,raw_image_size_y))*np.median(offset_map_with_padding)) / (np.ones((raw_image_size_x,raw_image_size_y))*np.median(gain_map_with_padding))))
+    return raw_image_size_x,raw_image_size_y
 
 def get_camera_calibration_data(gain, offset, noise, raw_img_size_x, raw_img_size_y):
 
@@ -105,24 +159,141 @@ def add_padding_reflective_BC(input_img, padding_size):
     return img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
 
 def apply_reflective_BC_object(object, intermediate_img, padding_size):
+    size_x = np.size(object)[0] - 2*padding_size
+    size_y = np.size(object)[1] - 2*padding_size
 
-	size_x = np.size(object)[0] - 2*padding_size
-	size_y = np.size(object)[1] - 2*padding_size
+    object_padding = object[padding_size:-padding_size, padding_size:-padding_size]
     
-    object_padding_size = object[padding_size:-padding_size, padding_size:-padding_size]
-    intermediate_img[size_x:-size_x, size_y:-size_y] = object[padding_size:-padding_size, padding_size:-padding_size] 
-	intermediate_img[:size_x, size_y:-size_y] = object[padding_size:-padding_size, padding_size:-padding_size][::-1, :] 
-	intermediate_img[-size_x:, size_y:-size_y] = object[padding_size:-padding_size, padding_size+1:end-padding_size][end:-1:1, :] 
-	intermediate_img[size_x+1:end-size_x,
-			    1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][:, end:-1:1] 
-	intermediate_img[size_x+1:end - size_x,
-			    end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][:, end:-1:1] 
-	intermediate_img[1:size_x,1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
-	intermediate_img[1:size_x,end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
-	intermediate_img[end-size_x+1:end,1:size_y] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
-	intermediate_img[end-size_x+1:end,end-size_y+1:end] .= object[padding_size+1:end-padding_size, padding_size+1:end-padding_size][end:-1:1, end:-1:1] 
+    intermediate_img[size_x:-size_x, size_y:-size_y] = object_padding 
+    intermediate_img[:size_x, size_y:-size_y] = object_padding[::-1, :] 
+    intermediate_img[-size_x:, size_y:-size_y] = object_padding[::-1, :] 
+    intermediate_img[size_x:-size_x, :size_y] = object_padding[:, ::-1] 
+    intermediate_img[size_x:-size_x, -size_y:] = object_padding[:, ::-1] 
+    intermediate_img[:size_x, :size_y] = object_padding[::-1, ::-1]
+    intermediate_img[:size_x, -size_y:] = object_padding[::-1, ::-1]
+    intermediate_img[-size_x:, :size_y] = object_padding[::-1, ::-1]
+    intermediate_img[-size_x:, -size_y:] = object_padding[::-1, ::-1] 
+    
+    object = intermediate_img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
+    
+    return None
 
-	object .= intermediate_img[size_x-padding_size+1:2*size_x+padding_size, 
-				   size_y-padding_size+1:2*size_y+padding_size]
+def apply_reflective_BC_shot(shot_noise_image, intermediate_img, padding_size):
+    
+    size_x = np.size(shot_noise_image)[1] - 2*padding_size
+    size_y = np.size(shot_noise_image)[2] - 2*padding_size
+    shot_noise_padding = shot_noise_image[padding_size:-padding_size, padding_size:-padding_size]
+    
+    intermediate_img[size_x:-size_x, size_y:-size_y] = shot_noise_padding 
+    intermediate_img[:size_x, size_y:-size_y] = shot_noise_padding[::-1, :] 
+    intermediate_img[-size_x:, size_y:-size_y] = shot_noise_padding[::-1, :] 
+    intermediate_img[size_x:-size_x, :size_y] = shot_noise_padding[:, ::-1] 
+    intermediate_img[size_x:-size_x, -size_y:] = shot_noise_padding[:, ::-1] 
+    intermediate_img[:size_x, :size_y] = shot_noise_padding[::-1, ::-1]
+    intermediate_img[:size_x, -size_y:] = shot_noise_padding[::-1, ::-1]
+    intermediate_img[-size_x:, :size_y] = shot_noise_padding[::-1, ::-1]
+    intermediate_img[-size_x:, -size_y:] = shot_noise_padding[::-1, ::-1] 
+    
+    shot_noise_image = intermediate_img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
+    
+    return None
 
-	return nothing
+def incoherent_PSF_airy_disk(x_c, x_e, light_wavelength, numerical_aperture):
+    
+    f_number = 1/(2*numerical_aperture) ##approx
+    return (jinc(np.linalg.norm(x_c - x_e)/(light_wavelength*f_number)))^2
+
+def jinc(x):
+    """
+    计算 Jinc 函数：jinc(x) = J₁(x) / x
+    注意：当 x = 0 时，J₁(x) / x 的值为 1/2。
+    """
+    if x == 0:
+        return 0.5  # 数学上，jinc(0) = 1/2
+    else:
+        return j1(x) / x
+
+def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera):
+
+    grid_physical_1D_x = camera.dx * np.arange(-(raw_image_size_x/2 + inference.padding_size),(raw_image_size_x/2 + inference.padding_size)) # in micrometers
+    grid_physical_1D_y = camera.dx * np.arange(-(raw_image_size_y/2 + inference.padding_size),(raw_image_size_y/2 + inference.padding_size)) # in micrometers
+    
+    grid_physical_length_x = (raw_image_size_x + 2*inference.padding_size - 1)*camera.dx			
+    grid_physical_length_y = (raw_image_size_y + 2*inference.padding_size - 1)*camera.dx
+
+    df_x = 1/(grid_physical_length_x) # Physcially correct spacing in spatial frequency space in units of micrometer^-1 
+    df_y = 1/(grid_physical_length_y) # Physcially correct spacing in spatial frequency space in units of micrometer^-1 
+
+    f_corrected_grid_1D_x = df_x * np.arange(-(raw_image_size_x/2 + inference.padding_size),(raw_image_size_x/2 + inference.padding_size)) # in units of micrometer^-1
+    f_corrected_grid_1D_y = df_y * np.arange(-(raw_image_size_y/2 + inference.padding_size),(raw_image_size_y/2 + inference.padding_size)) # in units of micrometer^-1
+
+    mtf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
+    psf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
+
+    if OpticalSystem.psf_type == "airy_disk":
+        
+        for j in range(raw_image_size_y + 2*inference.padding_size):
+            for i in range(raw_image_size_y + 2*inference.padding_size):
+                x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
+                psf_on_grid[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
+ 		end
+ 	end
+ 	normalization = sum(psf_on_grid) * dx^2
+ 	psf_on_grid = psf_on_grid ./ normalization
+	intermediate_img = fftshift(fft(ifftshift(psf_on_grid)))
+
+	function MTF(f_vector::Vector{Float64})
+		f_number::Float64 = 1/(2*numerical_aperture) ##approx
+		highest_transmitted_frequency = 1.0 / (light_wavelength*f_number) 
+		norm_f = norm(f_vector) / highest_transmitted_frequency
+		if norm_f < 1.0
+			mtf = 2.0/pi * (acos(norm_f) - norm_f*sqrt(1 - norm_f^2))
+		elseif norm_f > 1.0
+			mtf = 0.0
+		end
+		return mtf
+	end
+
+	for j in 1:raw_img_size_y + 2*padding_size
+		for i in 1:raw_img_size_x + 2*padding_size
+				mtf_on_grid[i, j] = MTF([f_corrected_grid_1D_x[i], f_corrected_grid_1D_y[j]]) 
+				if mtf_on_grid[i, j] == 0.0
+					intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
+				end
+		end
+	end
+	const FFT_point_spread_function::Matrix{ComplexF64} = ifftshift(intermediate_img) 
+
+elseif psf_type == "gaussian"
+	function incoherent_PSF(x_c::Vector{Float64}, x_e::Vector{Float64})
+		return exp(-norm(x_c-x_e)^2/(2.0*sigma^2)) /
+					(sqrt(2.0*pi) * sigma)^(size(x_e)[1])
+	end
+	for j in 1:raw_img_size_y + 2*padding_size
+		for i in 1:raw_img_size_x + 2*padding_size
+			x_e::Vector{Float64} = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
+			psf_on_grid[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
+		end
+	end
+	const FFT_point_spread_function::Matrix{ComplexF64} = fft(ifftshift(psf_on_grid))
+end
+
+
+
+const modulation_transfer_function::Matrix{Float64} = abs.(fftshift(FFT_point_spread_function))[
+ 				padding_size+1:end-padding_size, padding_size+1:end-padding_size] 
+const modulation_transfer_function_vectorized::Vector{Float64} = 
+			vec(modulation_transfer_function) ./ sum(modulation_transfer_function)
+
+psf_on_grid = 0
+mtf_on_grid = 0
+grid_physical_1D_x = 0
+grid_physical_1D_y = 0
+f_corrected_grid_1D_x = 0
+f_corrected_grid_1D_y = 0
+intermediate_img = 0
+
+
+
+if __name__ == "__main__":
+    main()
