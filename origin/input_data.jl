@@ -57,10 +57,14 @@ function add_padding_reflective_BC(input_img::Matrix{Float64})
 	size_y::Int64 = size(input_img)[2]
 
 	img::Matrix{Float64} = zeros(3*size_x, 3*size_y)
-	img[size_x+1:end-size_x,size_y+1:end-size_y] .= input_img 
-	img[1:size_x,size_y+1:end-size_y] .= input_img[end:-1:1, :] 
-	img[end-size_x+1:end,size_y+1:end-size_y] .= input_img[end:-1:1, :] 
-	img[size_x+1:end-size_x,1:size_y] .= input_img[:, end:-1:1] 
+	img[size_x+1:end-size_x,
+			size_y+1:end-size_y] .= input_img 
+	img[1:size_x,
+			size_y+1:end-size_y] .= input_img[end:-1:1, :] 
+	img[end-size_x+1:end,
+			size_y+1:end-size_y] .= input_img[end:-1:1, :] 
+	img[size_x+1:end-size_x,
+			1:size_y] .= input_img[:, end:-1:1] 
 	img[size_x+1:end - size_x,
         end-size_y+1:end] .= input_img[:, end:-1:1] 
 	img[1:size_x,1:size_y] .= input_img[end:-1:1, end:-1:1] 

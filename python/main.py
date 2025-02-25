@@ -6,6 +6,8 @@ import sys
 import math
 import multiprocessing
 from scipy.special import j1
+from numpy.fft import fft, ifft, fftshift, ifftshift
+from scipy.stats import dirichlet, poisson, norm
 
 class OpticalSystem:
     def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
@@ -46,7 +48,6 @@ class Inference:
         self.averaging_frequency = averaging_frequency
         self.plotting_frequency = plotting_frequency
 
-
 def main():
 
     optical_system, camera, inference, raw_image_path = input_parameter()
@@ -61,8 +62,7 @@ def main():
     generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera)
 
 
-    return None
-    
+    return None    
 
 def input_parameter():
     
@@ -132,11 +132,11 @@ def input_data(raw_image_path):
     median_photon_count = np.ones((raw_image_size_x,raw_image_size_y))*np.median(abs((input_raw_image - np.ones((raw_image_size_x,raw_image_size_y))*np.median(offset_map_with_padding)) / (np.ones((raw_image_size_x,raw_image_size_y))*np.median(gain_map_with_padding))))
     return raw_image_size_x,raw_image_size_y
 
-def get_camera_calibration_data(gain, offset, noise, raw_img_size_x, raw_img_size_y):
+def get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image_size_y):
 
-    offset_map = offset * np.ones(raw_img_size_x, raw_img_size_y)
-    gain_map = gain * np.ones(raw_img_size_x, raw_img_size_y)
-    error_map = noise * np.ones(raw_img_size_x, raw_img_size_y)
+    offset_map = offset * np.ones(raw_image_size_x, raw_image_size_y)
+    gain_map = gain * np.ones(raw_image_size_x, raw_image_size_y)
+    error_map = noise * np.ones(raw_image_size_x, raw_image_size_y)
 
     return offset_map, error_map, gain_map
 
@@ -199,7 +199,8 @@ def apply_reflective_BC_shot(shot_noise_image, intermediate_img, padding_size):
     return None
 
 def incoherent_PSF_airy_disk(x_c, x_e, light_wavelength, numerical_aperture):
-    
+    x_c = np.array(x_c)
+    x_e = np.array(x_e)
     f_number = 1/(2*numerical_aperture) ##approx
     return (jinc(np.linalg.norm(x_c - x_e)/(light_wavelength*f_number)))^2
 
@@ -218,7 +219,7 @@ def jinc(x):
     else:
         return j1(x) / x
 
-def MTF_air_disk(f_vector, light_wavelength, numerical_aperture)
+def MTF_air_disk(f_vector, light_wavelength, numerical_aperture):
 		f_number = 1/(2*numerical_aperture) ##approx
 		highest_transmitted_frequency = 1.0 / (light_wavelength*f_number) 
 		norm_f = np.linalg.norm(f_vector) / highest_transmitted_frequency
@@ -254,42 +255,105 @@ def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, 
  		
         normalization = np.sum(psf_on_grid) * camera.dx^2
         psf_on_grid = psf_on_grid / normalization
-        intermediate_img = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(psf_on_grid)))
+        intermediate_img = fftshift(fft(ifftshift(psf_on_grid)))
 
         for j in range(raw_image_size_y + 2*inference.padding_size):
-            for i in range(raw_image_size_y + 2*inference.padding_size):
+            for i in range(raw_image_size_x + 2*inference.padding_size):
                 mtf_on_grid[i, j] = MTF_air_disk([f_corrected_grid_1D_x[i], f_corrected_grid_1D_y[j]], optical_system.light_wavelength, optical_system.numerical_aperture)
                 if mtf_on_grid[i, j] == 0.0:
                     intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
 
-        FFT_point_spread_function = np.fft.ifftshift(intermediate_img) 
+        FFT_point_spread_function = ifftshift(intermediate_img) 
 
     elif OpticalSystem.psf_type == "gaussian":
+
+        for j in range(raw_image_size_y+ 2*inference.padding_size):
+            for i in range(raw_image_size_x + 2*inference.padding_size):
+                x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
+                psf_on_grid[i, j] =  incoherent_PSF_gaussian([0.0, 0.0], x_e)
+        
+        FFT_point_spread_function = fft(ifftshift(psf_on_grid))
+        
+        
+    modulation_transfer_function = abs(fftshift(FFT_point_spread_function))[inference.padding_size:-inference.padding_size, inference.padding_size:-inference.padding_size] 
+    modulation_transfer_function_vectorized = (modulation_transfer_function.flatten()) / sum(modulation_transfer_function)
+
+    psf_on_grid = 0
+    mtf_on_grid = 0
+    grid_physical_1D_x = 0
+    grid_physical_1D_y = 0
+    f_corrected_grid_1D_x = 0
+    f_corrected_grid_1D_y = 0
+    intermediate_img = 0
+
+def get_widefield_image(object, camera, FFT_point_spread_function):
+    FFT_illuminated_object = fft(ifftshift(object)) * camera.dx^2
+    FFT_final = FFT_point_spread_function * FFT_illuminated_object
+    image = abs(fftshift(ifft(FFT_final)).real)
+
+    return image
+
+def get_mean_image(object):
+    final_image = get_widefield_image(object)
+    return final_image
+
+def get_log_prior(inference, object, modulation_transfer_function_vectorized, raw_image_size_x, raw_image_size_y):
+    val_range_x = np.arange(inference.padding_size,inference.padding_size+raw_image_size_x)
+    val_range_y = np.arange(inference.padding_size,inference.padding_size+raw_image_size_y)
+    mod_fft_image = abs(fftshift(fft(ifftshift(object))))[val_range_x, val_range_y].flatten + np.finfo(np.float64).eps
+    log_prior = dirichlet.logpdf(mod_fft_image / sum(mod_fft_image), modulation_transfer_function_vectorized + np.finfo(np.float64).eps)
+    return log_prior
+
+def get_log_likelihood(object,shot_noise_image,inference,raw_image_with_padding,gain_map_with_padding,offset_map_with_padding,error_map_with_padding,raw_img_size_x,raw_img_size_y):
+    log_likelihood = 0.0
+    mean_image = get_mean_image(object)
+    val_range_x = np.arange(inference.padding_size,inference.padding_size+raw_img_size_x)
+    val_range_y = np.arange(inference.padding_size,inference.padding_size+raw_img_size_y)
+    log_likelihood += np.sum(poisson.logpmf(shot_noise_image[val_range_x, val_range_y], mean_image[val_range_x, val_range_y] + np.finfo(np.float64).eps))
 	
-	for j in 1:raw_img_size_y + 2*padding_size
-		for i in 1:raw_img_size_x + 2*padding_size
-			x_e::Vector{Float64} = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
-			psf_on_grid[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
-		end
-	end
-	const FFT_point_spread_function::Matrix{ComplexF64} = fft(ifftshift(psf_on_grid))
+    norm((gain_map_with_padding[val_range_x, val_range_y]*shot_noise_image[val_range_x, val_range_y])+offset_map_with_padding[val_range_x, val_range_y],error_map_with_padding[val_range_x, val_range_y] + np.finfo(np.float64).eps),raw_image_with_padding[val_range_x, val_range_y]
+
+    log_likelihood += sum(logpdf.(Normal.((gain_map_with_padding[val_range_x, val_range_y] .*shot_noise_image[val_range_x, val_range_y]) .+offset_map_with_padding[val_range_x, val_range_y],error_map_with_padding[val_range_x, val_range_y] .+ eps()),raw_image_with_padding[val_range_x, val_range_y]))
+    log_likelihood += np.sum(norm.logpmf
+
+
+	return log_likelihood
 end
 
 
+function get_log_likelihood(object::Matrix{Float64},
+			shot_noise_image::Matrix{Float64})
 
-const modulation_transfer_function::Matrix{Float64} = abs.(fftshift(FFT_point_spread_function))[
- 				padding_size+1:end-padding_size, padding_size+1:end-padding_size] 
-const modulation_transfer_function_vectorized::Vector{Float64} = 
-			vec(modulation_transfer_function) ./ sum(modulation_transfer_function)
+	log_likelihood::Float64 = 0.0
 
-psf_on_grid = 0
-mtf_on_grid = 0
-grid_physical_1D_x = 0
-grid_physical_1D_y = 0
-f_corrected_grid_1D_x = 0
-f_corrected_grid_1D_y = 0
-intermediate_img = 0
+	mean_image::Matrix{Float64} = get_mean_image(object)
+	val_range_x = collect(padding_size+1:1:padding_size+raw_img_size_x)
+	val_range_y = collect(padding_size+1:1:padding_size+raw_img_size_y)
 
+	log_likelihood += sum(logpdf.(Poisson.(
+				mean_image[val_range_x, val_range_y] .+ eps()),
+				shot_noise_image[val_range_x, val_range_y]))
+	log_likelihood += sum(logpdf.(Normal.(
+                (gain_map_with_padding[val_range_x, val_range_y] .*
+				shot_noise_image[val_range_x, val_range_y]) .+
+					offset_map_with_padding[val_range_x, val_range_y],
+                    error_map_with_padding[val_range_x, val_range_y] .+ eps()),
+					raw_image_with_padding[val_range_x, val_range_y]))
+
+	return log_likelihood
+end
+
+function compute_full_log_posterior(object::Matrix{Float64},
+							shot_noise_image::Matrix{Float64})
+
+	log_likelihood::Float64 = get_log_likelihood(object, shot_noise_image)
+ 	log_prior::Float64 = get_log_prior(object)
+	log_posterior::Float64 = log_likelihood + log_prior
+
+ 	@show log_likelihood, log_prior, log_posterior
+
+	return log_posterior
+end
 
 
 if __name__ == "__main__":
