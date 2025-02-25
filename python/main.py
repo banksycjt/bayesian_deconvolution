@@ -30,7 +30,9 @@ class Camera:
         self.noise_maps_available = noise_maps_available
 
 class Inference:
-    def __init__(self, padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency):
+    def __init__(self, padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws,
+                  chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, 
+                  annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency):
         self.padding_size = padding_size
         self.half_padding_size = half_padding_size
         self.covariance_object = covariance_object
@@ -109,7 +111,9 @@ def input_parameter():
 
     optical_system = OpticalSystem(psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma)
     camera = Camera(camera_pixel_size, physical_pixel_size, dx, gain, offset, noise, noise_maps_available)
-    inference = Inference(padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency)
+    inference = Inference(padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws,
+                           chain_burn_in_period, chain_starting_temperature, chain_time_constant, annealing_starting_temperature, 
+                           annealing_time_constant, annealing_burn_in_period, annealing_frequency, averaging_frequency, plotting_frequency)
 
     return optical_system, camera, inference, raw_image_path
 
@@ -129,7 +133,8 @@ def input_data(raw_image_path):
     offset_map_with_padding = add_padding_reflective_BC(offset_map)
     error_map_with_padding = add_padding_reflective_BC(error_map)
 
-    median_photon_count = np.ones((raw_image_size_x,raw_image_size_y))*np.median(abs((input_raw_image - np.ones((raw_image_size_x,raw_image_size_y))*np.median(offset_map_with_padding)) / (np.ones((raw_image_size_x,raw_image_size_y))*np.median(gain_map_with_padding))))
+    median_photon_count = np.ones((raw_image_size_x,raw_image_size_y))* np.median(abs((input_raw_image - np.ones((raw_image_size_x,raw_image_size_y))*np.median(offset_map_with_padding)) 
+                                                                                       / (np.ones((raw_image_size_x,raw_image_size_y))*np.median(gain_map_with_padding))))
     return raw_image_size_x,raw_image_size_y
 
 def get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image_size_y):
@@ -304,57 +309,79 @@ def get_log_prior(inference, object, modulation_transfer_function_vectorized, ra
     log_prior = dirichlet.logpdf(mod_fft_image / sum(mod_fft_image), modulation_transfer_function_vectorized + np.finfo(np.float64).eps)
     return log_prior
 
-def get_log_likelihood(object,shot_noise_image,inference,raw_image_with_padding,gain_map_with_padding,offset_map_with_padding,error_map_with_padding,raw_img_size_x,raw_img_size_y):
+def get_log_likelihood(object, shot_noise_image, inference, raw_image_with_padding, gain_map_with_padding, offset_map_with_padding,
+                       error_map_with_padding, raw_img_size_x,raw_img_size_y):
     log_likelihood = 0.0
     mean_image = get_mean_image(object)
     val_range_x = np.arange(inference.padding_size,inference.padding_size+raw_img_size_x)
     val_range_y = np.arange(inference.padding_size,inference.padding_size+raw_img_size_y)
-    log_likelihood += np.sum(poisson.logpmf(shot_noise_image[val_range_x, val_range_y], mean_image[val_range_x, val_range_y] + np.finfo(np.float64).eps))
+
+    log_likelihood += np.sum(poisson.logpmf(k=shot_noise_image[val_range_x, val_range_y], 
+                                            mu=mean_image[val_range_x, val_range_y] + np.finfo(np.float64).eps))
+    
+    log_likelihood += np.sum(norm.logpdf(raw_image_with_padding[val_range_x, val_range_y], 
+                                      loc=gain_map_with_padding[val_range_x, val_range_y] * shot_noise_image[val_range_x, val_range_y] + offset_map_with_padding[val_range_x, val_range_y], 
+                                      scale=error_map_with_padding[val_range_x, val_range_y] + np.finfo(float).eps))
+    return log_likelihood
+
+def compute_full_log_posterior(object, shot_noise_image):
+    
+    log_likelihood = get_log_likelihood(object, shot_noise_image)
+    log_prior = get_log_prior(object)
+    log_posterior = log_likelihood + log_prior
+    
+    return log_posterior
+
+def save_data(current_draw, mcmc_log_posterior, object, shot_noise_image, object_mean, averaging_counter, 
+              inference, raw_image_size_x,raw_image_size_y, working_directory):
+    
+    gray_image = cv2.cvtColor(object[inference.padding_size:inference.padding_size + raw_image_size_x, 
+                                     inference.padding_size:inference.padding_size + raw_image_size_y], 
+                                     cv2.COLOR_BGR2GRAY)
+    
+    cv2.imwrite(working_directory + "inferred_object_" + str(averaging_counter) + ".tif", gray_image)
 	
-    norm((gain_map_with_padding[val_range_x, val_range_y]*shot_noise_image[val_range_x, val_range_y])+offset_map_with_padding[val_range_x, val_range_y],error_map_with_padding[val_range_x, val_range_y] + np.finfo(np.float64).eps),raw_image_with_padding[val_range_x, val_range_y]
+    gray_image = cv2.cvtColor(object_mean[inference.padding_size:inference.padding_size + raw_image_size_x, 
+                                          inference.padding_size:inference.padding_size + raw_image_size_y], 
+                                          cv2.COLOR_BGR2GRAY)
 
-    log_likelihood += sum(logpdf.(Normal.((gain_map_with_padding[val_range_x, val_range_y] .*shot_noise_image[val_range_x, val_range_y]) .+offset_map_with_padding[val_range_x, val_range_y],error_map_with_padding[val_range_x, val_range_y] .+ eps()),raw_image_with_padding[val_range_x, val_range_y]))
-    log_likelihood += np.sum(norm.logpmf
+    cv2.imwrite(working_directory + "mean_inferred_object_" + str(averaging_counter) + ".tif", gray_image)
+	
+    return None
 
+def plot_data(current_draw, object, mean_object, shot_noise_image, log_posterior, inference, raw_image_size_x,raw_image_size_y, working_directory, raw_image_with_padding):
 
-	return log_likelihood
-end
+    fig, axs = plt.subplots(2, 2, figsize=(10, 10))
 
+    # 绘制第一张图
+    axs[0, 0].imshow(object[inference.padding_size:inference.padding_size + raw_image_size_x, inference.padding_size:inference.padding_size + raw_image_size_y],
+                     cmap='gray', origin='lower')
+    axs[0, 0].set_title("Current Sample", fontsize=12)
+    axs[0, 0].axis('off')  # 关闭坐标轴
+    
+    # 绘制第二张图
+    axs[0, 1].imshow(mean_object[inference.padding_size:inference.padding_size + raw_image_size_x, inference.padding_size:inference.padding_size + raw_image_size_y],
+                     cmap='gray', origin='lower')
+    axs[0, 1].set_title("Mean", fontsize=12)
+    axs[0, 1].axis('off')
 
-function get_log_likelihood(object::Matrix{Float64},
-			shot_noise_image::Matrix{Float64})
+    # 绘制第三张图
 
-	log_likelihood::Float64 = 0.0
+    axs[1, 0].plot(log_posterior[:current_draw], color='gray')
+    axs[1, 0].set_title("log(Posterior)", fontsize=12)
+    axs[1, 0].grid(True)
+    axs[1, 0].legend(False)
 
-	mean_image::Matrix{Float64} = get_mean_image(object)
-	val_range_x = collect(padding_size+1:1:padding_size+raw_img_size_x)
-	val_range_y = collect(padding_size+1:1:padding_size+raw_img_size_y)
+    # 绘制第四张图
+    axs[1, 1].imshow(raw_image_with_padding[inference.padding_size:inference.padding_size + raw_image_size_x, inference.padding_size:inference.padding_size + raw_image_size_y],
+                     cmap='gray', origin='lower')
+    axs[1, 1].set_title("Raw Image", fontsize=12)
+    axs[1, 1].axis('off')
 
-	log_likelihood += sum(logpdf.(Poisson.(
-				mean_image[val_range_x, val_range_y] .+ eps()),
-				shot_noise_image[val_range_x, val_range_y]))
-	log_likelihood += sum(logpdf.(Normal.(
-                (gain_map_with_padding[val_range_x, val_range_y] .*
-				shot_noise_image[val_range_x, val_range_y]) .+
-					offset_map_with_padding[val_range_x, val_range_y],
-                    error_map_with_padding[val_range_x, val_range_y] .+ eps()),
-					raw_image_with_padding[val_range_x, val_range_y]))
-
-	return log_likelihood
-end
-
-function compute_full_log_posterior(object::Matrix{Float64},
-							shot_noise_image::Matrix{Float64})
-
-	log_likelihood::Float64 = get_log_likelihood(object, shot_noise_image)
- 	log_prior::Float64 = get_log_prior(object)
-	log_posterior::Float64 = log_likelihood + log_prior
-
- 	@show log_likelihood, log_prior, log_posterior
-
-	return log_posterior
-end
-
+    plt.tight_layout()
+    plt.show()
+	
+    return None
 
 if __name__ == "__main__":
     main()
