@@ -8,6 +8,8 @@ import multiprocessing
 from scipy.special import j1
 from numpy.fft import fft, ifft, fftshift, ifftshift
 from scipy.stats import dirichlet, poisson, norm
+from scipy.special import gammaln
+import random
 
 class OpticalSystem:
     def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
@@ -145,8 +147,9 @@ def get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image
 
     return offset_map, error_map, gain_map
 
-def add_padding_reflective_BC(input_img, padding_size):
+def add_padding_reflective_BC(input_img, inference):
 
+    padding_size = inference.padding_size
     input_img = np.array(input_img)
     size_x = np.size(input_img)[0]
     size_y = np.size(input_img)[1]
@@ -349,7 +352,7 @@ def save_data(current_draw, mcmc_log_posterior, object, shot_noise_image, object
 	
     return None
 
-def plot_data(current_draw, object, mean_object, shot_noise_image, log_posterior, inference, raw_image_size_x,raw_image_size_y, working_directory, raw_image_with_padding):
+def plot_data(current_draw, object, mean_object, shot_noise_image, log_posterior, inference, raw_image_size_x, raw_image_size_y, working_directory, raw_image_with_padding):
 
     fig, axs = plt.subplots(2, 2, figsize=(10, 10))
 
@@ -382,6 +385,442 @@ def plot_data(current_draw, object, mean_object, shot_noise_image, log_posterior
     plt.show()
 	
     return None
+
+def get_sub_image(img, im, ip, jm, jp):
+	sub_img = img[im:ip, jm:jp]
+	return sub_img
+
+def chunk_images(raw_image_size_x, raw_image_size_y, sub_raw_image_size_x, sub_raw_image_size_y, n_procs_per_dim_x, n_procs_per_dim_y,
+                 padding_size, raw_image_with_padding, gain_map_with_padding, offset_map_with_padding, error_map_with_padding, processes):
+    
+
+    # Cartesian coordinates for each processor
+    i_procs = (processes-1) % n_procs_per_dim_x
+    j_procs = (processes-2 - i_procs) / n_procs_per_dim_x
+
+    # Boundary coordinates of chunks or sub raw images in x an y direction
+    im_raw = i_procs*sub_raw_image_size_x + 1
+    ip_raw = 2*padding_size + (i_procs+1) * sub_raw_image_size_x
+    jm_raw = j_procs*sub_raw_image_size_y + 1
+    jp_raw = 2*padding_size + (j_procs+1) * sub_raw_image_size_y
+
+    sub_img_size_x = ip_raw - im_raw + 1 - 2*padding_size
+    sub_img_size_y = jp_raw - jm_raw + 1 - 2*padding_size
+
+
+
+    image = raw_image_with_padding
+    sub_raw_image = get_sub_image(image, im_raw, ip_raw, jm_raw, jp_raw)
+
+    image = gain_map_with_padding
+    sub_gain_map = get_sub_image(image, im_raw, ip_raw, jm_raw, jp_raw)
+
+    image = offset_map_with_padding
+    sub_offset_map = get_sub_image(image, im_raw, ip_raw, jm_raw, jp_raw)
+
+    image = error_map_with_padding
+    sub_error_map = get_sub_image(image, im_raw, ip_raw, jm_raw, jp_raw)
+
+    image = 0
+
+    return sub_raw_image, sub_gain_map, sub_offset_map, sub_error_map, sub_img_size_x, sub_img_size_y
+
+def psf_for_inference(camera, optical_system, inference, raw_image_size_x, raw_image_size_y, processes, psf_type):
+    
+    grid_physical_1D_ij = camera.dx * np.arange(-inference.padding_size, inference.padding_size) # in micrometers
+    grid_physical_length_ij = 2.0*inference.padding_size*camera.dx
+
+    df_ij = 1/(grid_physical_length_ij) # Physcially correct spacing in spatial frequency space in units of micrometer^-1 
+    f_corrected_grid_1D_ij = df_ij * np.arange(-inference.padding_size, inference.padding_size)
+
+    mtf_on_grid_ij = np.zeros((2*inference.padding_size+1, 2*inference.padding_size+1))
+    psf_on_grid_ij = np.zeros((2*inference.padding_size+1, 2*inference.padding_size+1))
+
+    if psf_type == "airy_disk":
+        for j in range(2*inference.padding_size+1):
+               for i in range(2*inference.padding_size+1):
+                     x_e = [grid_physical_1D_ij[i], grid_physical_1D_ij[j]]
+                     psf_on_grid_ij[i, j] =  incoherent_PSF_airy_disk([0.0, 0.0], x_e, optical_system.light_wavelength, optical_system.numerical_aperture)
+        
+        normalization = np.sum(psf_on_grid_ij) * camera.dx^2
+        psf_on_grid_ij = psf_on_grid_ij / normalization
+    
+        intermediate_img = fftshift(fft(ifftshift(psf_on_grid_ij)))
+        
+        for j in range(2*inference.padding_size+1):
+            for i in range(2*inference.padding_size+1):
+                mtf_on_grid_ij[i, j] = MTF_air_disk([f_corrected_grid_1D_ij[i], f_corrected_grid_1D_ij[j]], optical_system.light_wavelength, optical_system.numerical_aperture)
+                if mtf_on_grid_ij[i, j] == 0.0:
+                    intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
+	    
+        FFT_point_spread_function_ij = ifftshift(intermediate_img) * camera.dx^2
+
+    elif psf_type == "gaussian":
+        for j in range(2*inference.padding_size+1):
+            for i in range(2*inference.padding_size+1):
+                x_e = [grid_physical_1D_ij[i], grid_physical_1D_ij[j]]
+                psf_on_grid_ij[i, j] =  incoherent_PSF_gaussian([0.0, 0.0], x_e)
+        
+        FFT_point_spread_function_ij = fft(ifftshift(psf_on_grid_ij)) * camera.dx^2
+        
+    fft_plan = fft(psf_on_grid_ij)
+    ifft_plan = ifft(psf_on_grid_ij)
+    modulation_transfer_function_ij = np.abs(fftshift(FFT_point_spread_function_ij)) 
+    modulation_transfer_function_ij_vectorized = modulation_transfer_function_ij.flatten()  / np.sum(modulation_transfer_function_ij)
+
+    grid_physical_ij = 0
+    normalization = 0
+    psf_on_grid = 0
+    mtf_on_grid = 0
+    intermediate_img = 0
+    f_corrected_grid_1D_ij = 0
+
+    return fft_plan, ifft_plan, modulation_transfer_function_ij_vectorized
+
+def get_widefield_image_ij(mean_img_ij, FFT_var, iFFT_var, img_ij, i, j, FFT_point_spread_function_ij, ifft_plan, inference):
+
+    half_padding_size = inference.half_padding_size
+    padding_size = inference.padding_size
+    FFT_var = (FFT_var * FFT_point_spread_function_ij)
+    iFFT_var = np.dot(ifft_plan, FFT_var)
+    img_ij = fftshift(iFFT_var)
+    mean_img_ij = np.abs(img_ij[half_padding_size:half_padding_size+padding_size, half_padding_size:half_padding_size+padding_size].real)
+    
+    return mean_img_ij
+
+def log_Beta(a):
+	z = sum(gammaln(a)) - gammaln(sum(a))
+	return z
+
+def log_Dirichlet(x, a):
+	z = np.sum((a - 1.0) * math.log(x)) - log_Beta(a)
+	return z
+
+def log_Dirichlet_MTF(x, MTF_minus_one, log_Beta_MTF):
+	x = MTF_minus_one * math.log(x)
+	z = sum(x) - log_Beta_MTF
+	return z
+
+def get_log_likelihood_ij(i, j, mean_img_ij, shot_noise_img_ij, padding_size):
+    
+    log_likelihood = 0.0 
+    for i in range(padding_size):
+        for j in range(padding_size):
+            log_likelihood += poisson.logpmf(mu=mean_img_ij[i, j] + np.linalg.eps, k=shot_noise_img_ij[i, j])
+    
+    return log_likelihood 
+
+def get_log_prior_ij(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, i, j):
+    
+    fftshift(img_ij, FFT_var)
+    img_ij_abs = np.abs(img_ij)
+    mod_fft_img_ij = (img_ij_abs.flatten) / (sum(img_ij_abs)) + np.linalg.eps
+    
+    return log_Dirichlet_MTF(mod_fft_img_ij)
+
+def bayesian_inference(modulation_transfer_function_ij_vectorized, conc_parameter):
+
+    log_Beta_MTF = log_Beta(modulation_transfer_function_ij_vectorized + np.finfo(np.float64).eps)
+    MTF_minus_one = (conc_parameter * modulation_transfer_function_ij_vectorized) - 1.0
+
+def sample_object_neighborhood(temperature, object, shot_noise_image, mean_img_ij, proposed_mean_img_ij, FFT_var, 
+                               iFFT_var, img_ij_abs, mod_fft_img_ij, n_accepted, inference, sub_img_size_x, fft_plan,
+                               sub_img_size_y, padding_size, half_padding_size, covariance_object, raw_image_size_x, raw_image_size_y,
+                               sub_raw_image, sub_gain_map, sub_offset_map, sub_error_map):
+	
+    for j in np.arange(padding_size, padding_size+sub_img_size_y):
+        for i in np.arange(padding_size, padding_size+sub_img_size_x):
+
+            old_value = object[i, j]
+            shot_noise_img_ij = shot_noise_image[i - half_padding_size: i + half_padding_size+1, j - half_padding_size: j + half_padding_size+1]
+            obj_ij = object[i - half_padding_size: i + half_padding_size+1, j - half_padding_size: j + half_padding_size+1] 
+            
+            img_ij = ifftshift(obj_ij)
+            FFT_var = np.dot(fft_plan, img_ij)
+            
+            old_log_prior = get_log_prior_ij(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, i, j)  
+
+ 			# FFT_var gets modified in the following function
+            
+            mean_img_ij = get_widefield_image_ij(mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
+            
+            old_log_likelihood = get_log_likelihood_ij(i, j, mean_img_ij, shot_noise_img_ij)
+            
+            old_log_posterior = old_log_likelihood + old_log_prior
+            
+            old_jac = math.log(old_value)
+
+            proposed_value = norm.rvs(loc=np.log(old_value), scale=np.sqrt(covariance_object), size=1)[0]
+
+            print(proposed_value)
+            
+            proposed_value = np.exp(proposed_value)
+            
+            object[i, j] = proposed_value
+
+            proposed_obj_ij = object[i - padding_size:i + padding_size+1, j - padding_size:j + padding_size+1] 
+            img_ij = ifftshift(proposed_obj_ij)
+            FFT_var = np.dot(fft_plan, img_ij)
+            
+            proposed_log_prior = get_log_prior_ij(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, i, j)
+            
+            proposed_mean_img_ij = get_widefield_image_ij(proposed_mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
+            
+            proposed_log_likelihood = get_log_likelihood_ij(i, j, proposed_mean_img_ij, shot_noise_img_ij)
+            
+            proposed_jac = np.log(proposed_value)
+            proposed_log_posterior = proposed_log_likelihood + proposed_log_prior
+            
+            log_hastings = (1.0/temperature) * (proposed_log_posterior - old_log_posterior) + proposed_jac - old_jac
+            log_rand = math.log(random.random())
+            
+            if log_hastings > log_rand:
+                np.copyto(mean_img_ij, proposed_mean_img_ij)
+                n_accepted += 1
+            else:
+                object[i, j] = old_value
+
+ 
+			# Sample Intermediate Expected Photon Counts on each Pixel
+			# Choose the central pixel in the mean image
+			# for expected photon count
+            
+            expected_photon_count = mean_img_ij[half_padding_size, half_padding_size] 
+            old_log_likelihood = norm.logpdf(sub_raw_image[i, j], loc=sub_gain_map[i, j]*expected_photon_count + sub_offset_map[i, j], scale=sub_error_map[i, j] + np.finfo(np.float64).eps)
+            old_log_prior = poisson.logpmf(k = shot_noise_image[i, j], mu = expected_photon_count + np.finfo(np.float64).eps)
+            
+            old_log_posterior = old_log_likelihood  + old_log_prior
+            
+            proposed_shot_noise_pixel = poisson.rvs(mu = shot_noise_image[i, j], size=1)[0]
+            
+            new_log_likelihood = norm.logpdf(sub_raw_image[i, j], loc=sub_gain_map[i, j]*proposed_shot_noise_pixel + sub_offset_map[i, j], scale=sub_error_map[i, j] + np.finfo(np.float64).eps)
+            
+            new_log_prior = poisson.logpmf(k = proposed_shot_noise_pixel, mu = expected_photon_count + np.finfo(np.float64).eps)
+ 			
+            new_log_posterior = new_log_likelihood  + new_log_prior
+
+            log_forward_proposal_probability = poisson.logpmf(k = proposed_shot_noise_pixel, mu = shot_noise_image[i, j] + np.finfo(np.float64).eps)
+            
+            log_backward_proposal_probability = poisson.logpmf(k = shot_noise_image[i, j], mu = proposed_shot_noise_pixel + np.finfo(np.float64).eps)
+            
+            log_hastings = (1.0/temperature)* (new_log_posterior - old_log_posterior) + log_backward_proposal_probability - log_forward_proposal_probability
+   
+            log_rand = math.log(random.random())
+            if log_hastings > log_rand: 
+                shot_noise_image[i, j] = proposed_shot_noise_pixel
+                
+    return object, shot_noise_image, n_accepted
+
+def sample_object_neighborhood_MLE(temperature, object, shot_noise_image, mean_img_ij, proposed_mean_img_ij, FFT_var,
+                                   iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted, inference, sub_img_size_x, fft_plan,
+                                   sub_img_size_y, padding_size, half_padding_size, covariance_object, raw_image_size_x, raw_image_size_y,
+                                   sub_raw_image, sub_gain_map, sub_offset_map, sub_error_map):
+       
+    for j in np.arange(padding_size, padding_size+sub_img_size_y):
+        for i in np.arange(padding_size, padding_size+sub_img_size_x):  
+                
+            old_value = object[i, j]
+            shot_noise_img_ij = shot_noise_image[i - half_padding_size: i + half_padding_size+1, j - half_padding_size: j + half_padding_size+1]
+            obj_ij = object[i - half_padding_size: i + half_padding_size+1, j - half_padding_size: j + half_padding_size+1]
+            img_ij = ifftshift(obj_ij)
+            FFT_var = np.dot(fft_plan, img_ij)
+
+ 			# FFT_var gets modified in the following function
+            mean_img_ij = get_widefield_image_ij(mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
+            
+            old_log_likelihood = get_log_likelihood_ij(i, j, mean_img_ij, shot_noise_img_ij)
+            
+            old_log_posterior = old_log_likelihood 
+            old_jac = np.log(old_value)
+
+            proposed_value = norm.rvs(loc=np.log(old_value), scale=np.sqrt(covariance_object), size=1)[0]
+            proposed_value = np.exp(proposed_value)
+            object[i, j] = proposed_value
+
+            proposed_obj_ij = object[i - padding_size:i + padding_size+1, j - padding_size:j + padding_size+1]
+            img_ij = ifftshift(proposed_obj_ij)
+            FFT_var = np.dot(fft_plan, img_ij)
+
+            proposed_mean_img_ij = get_widefield_image_ij(proposed_mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
+    		
+            proposed_log_likelihood = get_log_likelihood_ij(i, j, proposed_mean_img_ij, shot_noise_img_ij)
+            
+            proposed_jac = np.log(proposed_value)
+            proposed_log_posterior = proposed_log_likelihood 
+            
+            log_hastings = (1.0/temperature) * (proposed_log_posterior - old_log_posterior) + proposed_jac - old_jac
+            
+            if log_hastings > 0.0:
+                mean_img_ij = proposed_mean_img_ij
+                n_accepted += 1
+            else:
+                object[i, j] = old_value
+
+ 
+			# Sample Intermediate Expected Photon Counts on each Pixel
+			# Choose the central pixel in the mean image
+			# for expected photon count
+            expected_photon_count = mean_img_ij[half_padding_size, half_padding_size]
+            old_log_likelihood = norm.logpdf(sub_raw_image[i, j], loc=sub_gain_map[i, j]*expected_photon_count + sub_offset_map[i, j], scale=sub_error_map[i, j] + np.finfo(np.float64).eps)
+            
+            old_log_prior = poisson.logpmf(k = shot_noise_image[i, j], mu = expected_photon_count + np.finfo(np.float64).eps)
+            
+            old_log_posterior = old_log_likelihood  + old_log_prior
+            proposed_shot_noise_pixel = poisson.rvs(mu = shot_noise_image[i, j], size=1)[0]
+            
+            new_log_likelihood = norm.logpdf(sub_raw_image[i, j], loc=sub_gain_map[i, j]*proposed_shot_noise_pixel + sub_offset_map[i, j], scale=sub_error_map[i, j] + np.finfo(np.float64).eps)
+
+            new_log_prior = poisson.logpmf(k = proposed_shot_noise_pixel, mu = expected_photon_count + np.finfo(np.float64).eps)
+            
+            new_log_posterior = new_log_likelihood  + new_log_prior
+
+            log_forward_proposal_probability = poisson.logpmf(k = proposed_shot_noise_pixel, mu = shot_noise_image[i, j] + np.finfo(np.float64).eps)
+
+            log_backward_proposal_probability = poisson.logpmf(k = shot_noise_image[i, j], mu = proposed_shot_noise_pixel + np.finfo(np.float64).eps)
+
+            log_hastings = (1.0/temperature) * (new_log_posterior - old_log_posterior) + log_backward_proposal_probability - log_forward_proposal_probability
+            
+            if log_hastings > 0.0:
+                shot_noise_image[i, j] = proposed_shot_noise_pixel
+    
+    return object, shot_noise_image, n_accepted
+
+def sampler(psf_typ0, abbe_diffraction_limit, physical_pixel_size, padding_size, median_photon_count, raw_img_size_x, raw_img_size_y, 
+            sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, 
+            chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_frequency, 
+            rng, input_raw_image, gain_map_with_padding, offset_map_with_padding, error_map_with_padding, modulation_transfer_function_ij_vectorized, 
+            camera, optical_system, inference, im_raw, ip_raw, jm_raw, jp_raw):
+
+	# Initialize
+    draw = 1
+    print("draw = ", draw)
+    result_queue = multiprocessing.Queue()
+	# Arrays for main variables of interest
+    
+    object = np.zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
+    rng = np.random.default_rng()
+
+    object[padding_size:-padding_size, padding_size:-padding_size] = rng.random((raw_img_size_x, raw_img_size_y)) 
+    
+    sum_object = np.zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
+    mean_object = np.zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
+    
+    shot_noise_image = np.zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
+    shot_noise_image[padding_size:-padding_size, padding_size:-padding_size] = np.ceil(np.abs(input_raw_image - np.median(offset_map_with_padding))).astype(np.int64)
+
+    intermediate_img = np.zeros(3*raw_img_size_x, 3*raw_img_size_y)
+    apply_reflective_BC_object(object, intermediate_img)
+    apply_reflective_BC_shot(shot_noise_image, intermediate_img)
+    
+    mcmc_log_posterior = np.zeros(total_draws)
+    mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image)
+    
+    averaging_counter = 0.0
+ 
+	##@everywhere workers() begin
+    n_accepted = 0
+    temperature = 0.0
+    
+    sub_object = np.zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
+    sub_shot_noise_img = np.zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
+
+	# Arrays to store intermediate variables
+    mean_img_ij = np.zeros(padding_size+1, padding_size+1)
+    proposed_mean_img_ij = np.zeros(padding_size+1, padding_size+1)
+    FFT_var = np.zeros(2*padding_size+1, 2*padding_size+1)
+    iFFT_var = np.zeros(2*padding_size+1, 2*padding_size+1)
+    img_ij = np.zeros(2*padding_size+1, 2*padding_size+1)
+    img_ij_abs = np.zeros(2*padding_size+1, 2*padding_size+1)
+    mod_fft_img_ij = np.zeros(np.size(modulation_transfer_function_ij_vectorized)[0]) 
+	##end
+       
+    im = np.zeros(n_procs_per_dim_x)
+    ip = np.zeros(n_procs_per_dim_x)
+    jm = np.zeros(n_procs_per_dim_y)
+    jp = np.zeros(n_procs_per_dim_y)
+
+    for i in range(n_procs_per_dim_x):
+        im[i+1] = padding_size + i*sub_raw_img_size_x + 1
+        ip[i+1] = padding_size + (i+1)*sub_raw_img_size_x
+        
+    for j in range(n_procs_per_dim_y):
+        jm[j+1] = padding_size + j*sub_raw_img_size_y + 1          
+        jp[j+1] = padding_size + (j+1)*sub_raw_img_size_y
+
+
+    n_accept = 0
+    temperature = 0.0
+    
+    for draw in np.arange(2, total_draws+1):
+        if draw > chain_burn_in_period:
+            temperature = 1.0 + (annealing_starting_temperature-1.0)*np.exp(-((draw-chain_burn_in_period-1) % annealing_frequency)/annealing_time_constant)
+        elif draw < chain_burn_in_period:
+            temperature = 1.0 + (chain_starting_temperature-1.0)*np.exp(-((draw-1) % chain_burn_in_period)/chain_time_constant)
+            
+        print(draw)
+        print(temperature)
+
+		##@everywhere workers() begin
+        sub_object = object[im_raw:ip_raw, jm_raw:jp_raw]
+        sub_shot_noise_img = shot_noise_image[im_raw:ip_raw, jm_raw:jp_raw]
+        
+        i_procs = (5-1) % n_procs_per_dim_x # 并行计算的变量
+        j_procs = (5-2 - i_procs) / n_procs_per_dim_x
+
+        n_accepted = 0
+        
+        if i_procs + j_procs < draw+1:
+            if draw > chain_burn_in_period:
+                sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood(temperature,  sub_object,  sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
+											FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
+            else:
+                sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood_MLE(temperature,  sub_object,  sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
+											FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
+        n_accept = 0
+        for i in range(n_procs_per_dim_x):
+            for j in range(n_procs_per_dim_y):
+                
+                procs_id = ((j-1)*n_procs_per_dim_x+(i-1)+2)
+                sub_img = result_queue.get()#sub_img = view((@fetchfrom procs_id sub_object), :, :)
+                
+                object[im[i]:ip[i], jm[j]:jp[j]] = sub_img[padding_size:-padding_size, padding_size:padding_size]
+                
+                sub_img = result_queue.get()#sub_img = view((@fetchfrom procs_id sub_shot_noise_img), :, :)	
+                shot_noise_image[im[i]:ip[i], jm[j]:jp[j]] = sub_img[padding_size:-padding_size, padding_size:-padding_size]
+                
+                accepted = 0 #accepted::Int64 = @fetchfrom procs_id n_accepted
+                n_accept += accepted
+        
+        apply_reflective_BC_object(object, intermediate_img)
+        apply_reflective_BC_shot(shot_noise_image, intermediate_img)
+        
+        print("accepted ", n_accept, " out of ", raw_img_size_x * raw_img_size_y, " pixels")	
+        print("acceptance ratio = ", n_accept/ (raw_img_size_x * raw_img_size_y))	
+        
+        mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image)
+        
+        if (draw == chain_burn_in_period) or \
+            ((draw > chain_burn_in_period) and 
+            ((draw - chain_burn_in_period) % annealing_frequency > annealing_burn_in_period or 
+            (draw - chain_burn_in_period) % annealing_frequency == 0) and 
+            ((draw - chain_burn_in_period) % averaging_frequency == 0)):
+            
+            averaging_counter += 1.0
+            sum_object = object
+            mean_object = sum_object / averaging_counter
+            
+            print("Averaging Counter = ", averaging_counter)
+            print("Saving Data...")
+            
+            save_data(draw, mcmc_log_posterior, object, shot_noise_image, mean_object, averaging_counter)
+        
+        if draw % plotting_frequency == 0:
+       		plot_data(draw, object, mean_object, shot_noise_image, mcmc_log_posterior)
+    
+
+
+sampler()
+rmprocs(workers())
 
 if __name__ == "__main__":
     main()
