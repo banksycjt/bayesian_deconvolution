@@ -76,7 +76,7 @@ end
 const modulation_transfer_function::Matrix{Float64} = abs.(fftshift(FFT_point_spread_function))[
  				padding_size+1:end-padding_size, padding_size+1:end-padding_size] 
 const modulation_transfer_function_vectorized::Vector{Float64} = 
-			vec(modulation_transfer_function) ./ sum(modulation_transfer_function)
+			vec(modulation_transfer_function) ./ sum(sum(modulation_transfer_function))
 
 psf_on_grid = 0
 mtf_on_grid = 0

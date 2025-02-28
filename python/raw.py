@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import cv2
 import os
 import sys
-import math
+from math import pi, sqrt, ceil
 import multiprocessing
 from scipy.special import j1
 from numpy.fft import fft, ifft, fftshift, ifftshift
@@ -79,7 +79,7 @@ def input_parameter():
     light_wavelength = 0.660# In micrometers
     abbe_diffraction_limit = light_wavelength/(2*numerical_aperture) # optical resolution in micrometers
     f_diffraction_limit = 1/abbe_diffraction_limit # Diffraction limit in k-space
-    sigma = math.sqrt(2.0)/(2.0*math.pi)*light_wavelength/numerical_aperture # Standard Deviation in PSF
+    sigma = sqrt(2.0)/(2.0*pi)*light_wavelength/numerical_aperture # Standard Deviation in PSF
 
     # Camera Parameters
     camera_pixel_size = 6.5 # In micrometers
@@ -91,7 +91,7 @@ def input_parameter():
     noise_maps_available = False
 
     # Inference Parameters
-    padding_size = 4*math.ceil(abbe_diffraction_limit/physical_pixel_size) 
+    padding_size = 4*ceil(abbe_diffraction_limit/physical_pixel_size) 
     half_padding_size = padding_size/2
     covariance_object  = 0.5
     conc_parameter = 1.0
