@@ -8,6 +8,8 @@ def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, 
     dx = camera.dx
     padding_size = inference.padding_size
     psf_type = optical_system.psf_type
+    light_wavelength = optical_system.light_wavelength
+    numerical_aperture = optical_system.numerical_aperture
     
     grid_physical_1D_x = dx * np.arange(-(raw_image_size_x/2 + padding_size),(raw_image_size_x/2 + padding_size)) # in micrometers
     grid_physical_1D_y = dx * np.arange(-(raw_image_size_y/2 + padding_size),(raw_image_size_y/2 + padding_size)) # in micrometers
@@ -21,15 +23,15 @@ def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, 
     f_corrected_grid_1D_x = df_x * np.arange(-(raw_image_size_x/2 + padding_size),(raw_image_size_x/2 + padding_size)) # in units of micrometer^-1
     f_corrected_grid_1D_y = df_y * np.arange(-(raw_image_size_y/2 + padding_size),(raw_image_size_y/2 + padding_size)) # in units of micrometer^-1
 
-    mtf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
-    psf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
+    mtf_on_grid = np.zeros((raw_image_size_x+2*padding_size, raw_image_size_y+2*padding_size))
+    psf_on_grid = np.zeros((raw_image_size_x+2*padding_size, raw_image_size_y+2*padding_size))
 
     if psf_type == "airy_disk":
         
-        for j in range(raw_image_size_y + 2*inference.padding_size):
-            for i in range(raw_image_size_y + 2*inference.padding_size):
+        for j in range(raw_image_size_y + 2*padding_size):
+            for i in range(raw_image_size_x + 2*padding_size):
                 x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
-                psf_on_grid[i, j] =  incoherent_PSF_airy_disk([0.0, 0.0], x_e, optical_system.light_wavelength, optical_system.numerical_aperture)
+                psf_on_grid[i, j] =  incoherent_PSF_airy_disk([0.0, 0.0], x_e, light_wavelength, numerical_aperture)
  		
         normalization = np.sum(psf_on_grid) * camera.dx^2
         psf_on_grid = psf_on_grid / normalization
@@ -66,9 +68,8 @@ def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, 
 
 def incoherent_PSF_airy_disk(x_c, x_e, light_wavelength, numerical_aperture):
     x_c = np.array(x_c)
-    x_e = np.array(x_e)
     f_number = 1/(2*numerical_aperture) ##approx
-    return (jinc(np.linalg.norm(x_c - x_e)/(light_wavelength*f_number)))^2
+    return (jinc(np.linalg.norm(x_c - x_e)/(light_wavelength*f_number)))**2
 
 def incoherent_PSF_gaussian(x_c, x_e, sigma):
     x_c = np.array(x_c)
