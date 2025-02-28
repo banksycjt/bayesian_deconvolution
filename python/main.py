@@ -22,6 +22,13 @@ class Camera:
         self.noise = noise
         self.noise_maps_available = noise_maps_available
 
+    def get_camera_calibration_data(self, raw_image_size_x, raw_image_size_y):
+
+        offset_map = self.offset * np.ones(raw_image_size_x, raw_image_size_y)
+        gain_map = self.gain * np.ones(raw_image_size_x, raw_image_size_y)
+        error_map = self.noise * np.ones(raw_image_size_x, raw_image_size_y)
+
+        return offset_map, error_map, gain_map
 
 class Inference:
     def __init__(self, padding_size, half_padding_size, covariance_object, conc_parameter, n_procs_per_dim_x, n_procs_per_dim_y, total_draws,
@@ -44,11 +51,16 @@ class Inference:
         self.averaging_frequency = averaging_frequency
         self.plotting_frequency = plotting_frequency
 
-
-
 def main():
 
     optical_system, camera, inference, raw_image_path = input_parameter()
+    (input_raw_image, raw_image_size_x, raw_image_size_y, offset_map, error_map, gain_map, raw_image_with_padding, 
+     gain_map_with_padding, offset_map_with_padding, error_map_with_padding, median_photon_count) = input_data(raw_image_path, camera)
+
+    rng = np.random.default_rng()
+
+    sub_raw_img_size_x = raw_image_size_x/inference.n_procs_per_dim_x 
+    sub_raw_img_size_y = raw_image_size_y/inference.n_procs_per_dim_y
 
 def input_parameter():
     
@@ -101,17 +113,15 @@ def input_parameter():
 
     return optical_system, camera, inference, raw_image_path
 
-def input_data(raw_image_path):
+def input_data(raw_image_path, camera):
 
     input_raw_image = cv2.imread(raw_image_path, cv2.IMREAD_UNCHANGED)
     input_raw_image = input_raw_image.astype(np.float64)    
 
     raw_image_size_x = input_raw_image.shape[0]
     raw_image_size_y = input_raw_image.shape[1]
-    gain = 1.957
-    offset = 100.0
-    noise = 2.3
-    offset_map, error_map, gain_map = get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image_size_y)
+
+    offset_map, error_map, gain_map = camera.get_camera_calibration_data(raw_image_size_x, raw_image_size_y)
     raw_image_with_padding = add_padding_reflective_BC(input_raw_image)
     gain_map_with_padding = add_padding_reflective_BC(gain_map)
     offset_map_with_padding = add_padding_reflective_BC(offset_map)
@@ -122,6 +132,85 @@ def input_data(raw_image_path):
     
     return (input_raw_image, raw_image_size_x, raw_image_size_y, offset_map, error_map, gain_map, raw_image_with_padding, gain_map_with_padding,
             offset_map_with_padding, error_map_with_padding, median_photon_count)
+
+def add_padding_reflective_BC(input_img, inference):
+
+    padding_size = inference.padding_size
+    input_img = np.array(input_img)
+    size_x = np.size(input_img)[0]
+    size_y = np.size(input_img)[1]
+    
+    img = np.zeros(3*size_x, 3*size_y)
+    img[size_x:-size_x, size_y:-size_y] = input_img 
+    img[:size_x, size_y:-size_y]= np.flip(input_img,0)
+    img[-size_x:, size_y:-size_y]= np.flip(input_img,0)
+    img[size_x:-size_x, :size_y]= np.flip(input_img,1)
+    img[size_x:-size_x, -size_y:]= np.flip(input_img,1)
+    img[:size_x, :size_y]= np.flip(np.flip(input_img,0),1)
+    img[:size_x, -size_y:]= np.flip(np.flip(input_img,0),1)
+    img[-size_x:, :size_y]= np.flip(np.flip(input_img,0),1)
+    img[-size_x:, -size_y:]= np.flip(np.flip(input_img,0),1)
+    return img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
+
+def generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera):
+
+    dx = camera.dx
+    padding_size = inference.padding_size
+
+    grid_physical_1D_x = dx * np.arange(-(raw_image_size_x/2 + padding_size),(raw_image_size_x/2 + padding_size)) # in micrometers
+    grid_physical_1D_y = dx * np.arange(-(raw_image_size_y/2 + padding_size),(raw_image_size_y/2 + padding_size)) # in micrometers
+    
+    grid_physical_length_x = (raw_image_size_x + 2*padding_size - 1)*dx			
+    grid_physical_length_y = (raw_image_size_y + 2*padding_size - 1)*dx
+
+    df_x = 1/(grid_physical_length_x) # Physcially correct spacing in spatial frequency space in units of micrometer^-1 
+    df_y = 1/(grid_physical_length_y) # Physcially correct spacing in spatial frequency space in units of micrometer^-1 
+
+    f_corrected_grid_1D_x = df_x * np.arange(-(raw_image_size_x/2 + padding_size),(raw_image_size_x/2 + padding_size)) # in units of micrometer^-1
+    f_corrected_grid_1D_y = df_y * np.arange(-(raw_image_size_y/2 + padding_size),(raw_image_size_y/2 + padding_size)) # in units of micrometer^-1
+
+    mtf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
+    psf_on_grid = np.zeros(raw_image_size_x+2*inference.padding_size, raw_image_size_y+2*inference.padding_size)
+
+    if OpticalSystem.psf_type == "airy_disk":
+        
+        for j in range(raw_image_size_y + 2*inference.padding_size):
+            for i in range(raw_image_size_y + 2*inference.padding_size):
+                x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
+                psf_on_grid[i, j] =  incoherent_PSF_airy_disk([0.0, 0.0], x_e, optical_system.light_wavelength, optical_system.numerical_aperture)
+ 		
+        normalization = np.sum(psf_on_grid) * camera.dx^2
+        psf_on_grid = psf_on_grid / normalization
+        intermediate_img = fftshift(fft(ifftshift(psf_on_grid)))
+
+        for j in range(raw_image_size_y + 2*inference.padding_size):
+            for i in range(raw_image_size_x + 2*inference.padding_size):
+                mtf_on_grid[i, j] = MTF_air_disk([f_corrected_grid_1D_x[i], f_corrected_grid_1D_y[j]], optical_system.light_wavelength, optical_system.numerical_aperture)
+                if mtf_on_grid[i, j] == 0.0:
+                    intermediate_img[i, j] = 0.0 * intermediate_img[i, j]
+
+        FFT_point_spread_function = ifftshift(intermediate_img) 
+
+    elif OpticalSystem.psf_type == "gaussian":
+
+        for j in range(raw_image_size_y+ 2*inference.padding_size):
+            for i in range(raw_image_size_x + 2*inference.padding_size):
+                x_e = [grid_physical_1D_x[i], grid_physical_1D_y[j]]
+                psf_on_grid[i, j] =  incoherent_PSF_gaussian([0.0, 0.0], x_e)
+        
+        FFT_point_spread_function = fft(ifftshift(psf_on_grid))
+        
+        
+    modulation_transfer_function = abs(fftshift(FFT_point_spread_function))[inference.padding_size:-inference.padding_size, inference.padding_size:-inference.padding_size] 
+    modulation_transfer_function_vectorized = (modulation_transfer_function.flatten()) / sum(modulation_transfer_function)
+
+    psf_on_grid = 0
+    mtf_on_grid = 0
+    grid_physical_1D_x = 0
+    grid_physical_1D_y = 0
+    f_corrected_grid_1D_x = 0
+    f_corrected_grid_1D_y = 0
+    intermediate_img = 0
 
 
 if __name__ == "_main_":
