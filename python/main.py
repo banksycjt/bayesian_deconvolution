@@ -1,6 +1,10 @@
 from math import ceil, sqrt
 import numpy as np
 import cv2
+from numpy import pi
+from psf import generate_psf
+from multiprocessing import Pool
+from time import time
 
 class OpticalSystem:
     def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
@@ -61,6 +65,20 @@ def main():
 
     sub_raw_img_size_x = raw_image_size_x/inference.n_procs_per_dim_x 
     sub_raw_img_size_y = raw_image_size_y/inference.n_procs_per_dim_y
+
+    modulation_transfer_function_vectorized = generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera)
+
+    testFL = np.arange(1,13)
+
+    t1 = time()
+    print('concurrent:') 
+    pool = Pool(12)  # 创建拥有3个进程数量的进程池
+    # testFL:要处理的数据列表，run：处理testFL列表中数据的函数
+    pool.map(parallel, testFL)
+    pool.close()  # 关闭进程池，不再接受新的进程
+    pool.join()  # 主进程阻塞等待子进程的退出
+    t2 = time()
+    print("并行执行时间：", int(t2 - t1))
 
 def input_parameter():
     
@@ -152,7 +170,8 @@ def add_padding_reflective_BC(input_img, inference):
     img[-size_x:, -size_y:]= np.flip(np.flip(input_img,0),1)
     return img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
 
-
+def parallel():
+    ...
 
 
 if __name__ == "_main_":
