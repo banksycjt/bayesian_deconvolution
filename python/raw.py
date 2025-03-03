@@ -821,7 +821,6 @@ def sampler(psf_typ0, abbe_diffraction_limit, physical_pixel_size, padding_size,
 
 
 sampler()
-rmprocs(workers())
 
 if __name__ == "__main__":
     main()
