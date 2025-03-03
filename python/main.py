@@ -6,6 +6,7 @@ from psf import generate_psf
 from multiprocessing import Pool
 from time import time
 from chunk_images import chunk_images
+from psf_inference import psf_for_inference
 
 class OpticalSystem:
     def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
@@ -68,6 +69,8 @@ def main():
     sub_raw_img_size_y = raw_image_size_y/inference.n_procs_per_dim_y
 
     modulation_transfer_function_vectorized = generate_psf(raw_image_size_x, raw_image_size_y, inference, optical_system, camera)
+
+    fft_plan, ifft_plan, modulation_transfer_function_ij_vectorized = psf_for_inference(camera, optical_system, inference)
 
     data_list = []
     for i in range(12):
@@ -184,9 +187,12 @@ def parallel(process, raw_image_size_x, raw_image_size_y, sub_raw_img_size_x, su
     n_procs_per_dim_y = inference.n_procs_per_dim_y
     padding_size = inference.padding_size
 
-    chunk_images(sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, 
-                 padding_size, raw_image_with_padding, gain_map_with_padding, offset_map_with_padding, 
-                 error_map_with_padding, process)
+    # Chunk images
+    (sub_raw_image, sub_gain_map, sub_offset_map, sub_error_map, sub_img_size_x, sub_img_size_y, im_raw, ip_raw, jm_raw, jp_raw, i_procs,
+    j_procs) = chunk_images(sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, padding_size, raw_image_with_padding,
+                             gain_map_with_padding, offset_map_with_padding, error_map_with_padding, process)
+    
+
 
 
 if __name__ == "_main_":

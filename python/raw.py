@@ -565,7 +565,7 @@ def sample_object_neighborhood(temperature, object, shot_noise_image, mean_img_i
             
             proposed_log_prior = get_log_prior_ij(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, i, j)
             
-            proposed_mean_img_ij = get_widefield_image_ij(proposed_mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
+            proposed_mean_img_ij = (proposed_mean_img_ij, FFT_var, iFFT_var, img_ij, i, j)
             
             proposed_log_likelihood = get_log_likelihood_ij(i, j, proposed_mean_img_ij, shot_noise_img_ij)
             
