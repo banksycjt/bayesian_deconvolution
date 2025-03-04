@@ -1,19 +1,22 @@
-from numpy import zeros, random, ceil, abs, median
+from numpy import zeros, random, ceil, abs, median, int64
+from reflective_BC import apply_reflective_BC_object, apply_reflective_BC_shot
+from global_posterior import compute_full_log_posterior
 
-
-def sampler(psf_typ0, abbe_diffraction_limit, physical_pixel_size, padding_size, median_photon_count, raw_img_size_x, raw_img_size_y, 
-            sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, total_draws, chain_burn_in_period, 
+def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size, median_photon_count, raw_img_size_x, raw_img_size_y, 
+            sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, chain_burn_in_period, 
             chain_starting_temperature, chain_time_constant, annealing_starting_temperature, annealing_time_constant, annealing_frequency, 
-            rng, input_raw_image, gain_map_with_padding, offset_map_with_padding, error_map_with_padding, modulation_transfer_function_ij_vectorized, 
-            camera, optical_system, inference, im_raw, ip_raw, jm_raw, jp_raw):
+            input_raw_image, raw_image_with_padding, gain_map_with_padding, offset_map_with_padding, error_map_with_padding, 
+            modulation_transfer_function_ij_vectorized, camera, optical_system, inference, im_raw, ip_raw, jm_raw, jp_raw, 
+            modulation_transfer_function_vectorized, raw_image_size_x, raw_image_size_y):
 
 	# Initialize
-    draw = 1
+    draw = 0
     print("draw = ", draw)
+    total_draws = inference.total_draws
 
 	# Arrays for main variables of interest
     
-    object = zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
+    object = zeros((raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size))
     rng = random.default_rng()
 
     object[padding_size:-padding_size, padding_size:-padding_size] = rng.random((raw_img_size_x, raw_img_size_y)) 
@@ -22,14 +25,16 @@ def sampler(psf_typ0, abbe_diffraction_limit, physical_pixel_size, padding_size,
     mean_object = zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
     
     shot_noise_image = zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
-    shot_noise_image[padding_size:-padding_size, padding_size:-padding_size] = ceil(abs(input_raw_image - median(offset_map_with_padding))).astype(np.int64)
+    shot_noise_image[padding_size:-padding_size, padding_size:-padding_size] = ceil(abs(input_raw_image - median(offset_map_with_padding))).astype(int64)
 
     intermediate_img = zeros(3*raw_img_size_x, 3*raw_img_size_y)
-    apply_reflective_BC_object(object, intermediate_img)
-    apply_reflective_BC_shot(shot_noise_image, intermediate_img)
+    object = apply_reflective_BC_object(object, intermediate_img, padding_size)
+    shot_noise_image = apply_reflective_BC_shot(shot_noise_image, intermediate_img, padding_size)
     
-    mcmc_log_posterior = np.zeros(total_draws)
-    mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image)
+    mcmc_log_posterior = zeros(total_draws)
+    mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image, inference, raw_image_with_padding, gain_map_with_padding, 
+                               offset_map_with_padding, error_map_with_padding, raw_img_size_x,raw_img_size_y, 
+                               modulation_transfer_function_vectorized, raw_image_size_x, raw_image_size_y)
     
     averaging_counter = 0.0
  

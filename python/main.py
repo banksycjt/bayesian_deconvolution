@@ -1,5 +1,5 @@
 from math import ceil, sqrt
-import numpy as np
+from numpy import ones, zeros, float64, median
 import cv2
 from numpy import pi
 from psf import generate_psf
@@ -7,6 +7,7 @@ from multiprocessing import Pool
 from time import time
 from chunk_images import chunk_images
 from psf_inference import psf_for_inference
+from reflective_BC import add_padding_reflective_BC
 
 class OpticalSystem:
     def __init__(self, psf_type, numerical_aperture, magnification, light_wavelength, abbe_diffraction_limit, f_diffraction_limit, sigma):
@@ -30,9 +31,9 @@ class Camera:
 
     def get_camera_calibration_data(self, raw_image_size_x, raw_image_size_y):
 
-        offset_map = self.offset * np.ones(raw_image_size_x, raw_image_size_y)
-        gain_map = self.gain * np.ones(raw_image_size_x, raw_image_size_y)
-        error_map = self.noise * np.ones(raw_image_size_x, raw_image_size_y)
+        offset_map = self.offset * ones(raw_image_size_x, raw_image_size_y)
+        gain_map = self.gain * ones(raw_image_size_x, raw_image_size_y)
+        error_map = self.noise * ones(raw_image_size_x, raw_image_size_y)
 
         return offset_map, error_map, gain_map
 
@@ -62,8 +63,6 @@ def main():
     optical_system, camera, inference, raw_image_path = input_parameter()
     (input_raw_image, raw_image_size_x, raw_image_size_y, offset_map, error_map, gain_map, raw_image_with_padding, 
      gain_map_with_padding, offset_map_with_padding, error_map_with_padding, median_photon_count) = input_data(raw_image_path, camera)
-
-    rng = np.random.default_rng()
 
     sub_raw_img_size_x = raw_image_size_x/inference.n_procs_per_dim_x 
     sub_raw_img_size_y = raw_image_size_y/inference.n_procs_per_dim_y
@@ -143,7 +142,7 @@ def input_parameter():
 def input_data(raw_image_path, camera):
 
     input_raw_image = cv2.imread(raw_image_path, cv2.IMREAD_UNCHANGED)
-    input_raw_image = input_raw_image.astype(np.float64)    
+    input_raw_image = input_raw_image.astype(float64)    
 
     raw_image_size_x = input_raw_image.shape[0]
     raw_image_size_y = input_raw_image.shape[1]
@@ -154,30 +153,11 @@ def input_data(raw_image_path, camera):
     offset_map_with_padding = add_padding_reflective_BC(offset_map)
     error_map_with_padding = add_padding_reflective_BC(error_map)
 
-    median_photon_count = np.ones((raw_image_size_x,raw_image_size_y))* np.median(abs((input_raw_image - np.ones((raw_image_size_x,raw_image_size_y))*np.median(offset_map_with_padding)) 
-                                                                                       / (np.ones((raw_image_size_x,raw_image_size_y))*np.median(gain_map_with_padding))))
+    median_photon_count = ones((raw_image_size_x,raw_image_size_y))*median(abs((input_raw_image - ones((raw_image_size_x,raw_image_size_y))*
+                             median(offset_map_with_padding)) / (ones((raw_image_size_x,raw_image_size_y))*median(gain_map_with_padding))))
     
     return (input_raw_image, raw_image_size_x, raw_image_size_y, offset_map, error_map, gain_map, raw_image_with_padding, gain_map_with_padding,
             offset_map_with_padding, error_map_with_padding, median_photon_count)
-
-def add_padding_reflective_BC(input_img, inference):
-
-    padding_size = inference.padding_size
-    input_img = np.array(input_img)
-    size_x = np.size(input_img)[0]
-    size_y = np.size(input_img)[1]
-    
-    img = np.zeros(3*size_x, 3*size_y)
-    img[size_x:-size_x, size_y:-size_y] = input_img 
-    img[:size_x, size_y:-size_y]= np.flip(input_img,0)
-    img[-size_x:, size_y:-size_y]= np.flip(input_img,0)
-    img[size_x:-size_x, :size_y]= np.flip(input_img,1)
-    img[size_x:-size_x, -size_y:]= np.flip(input_img,1)
-    img[:size_x, :size_y]= np.flip(np.flip(input_img,0),1)
-    img[:size_x, -size_y:]= np.flip(np.flip(input_img,0),1)
-    img[-size_x:, :size_y]= np.flip(np.flip(input_img,0),1)
-    img[-size_x:, -size_y:]= np.flip(np.flip(input_img,0),1)
-    return img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
 
 def parallel(process, raw_image_size_x, raw_image_size_y, sub_raw_img_size_x, sub_raw_img_size_y, inference, optical_system, camera, 
              raw_image_with_padding, gain_map_with_padding, offset_map_with_padding, error_map_with_padding):
@@ -192,8 +172,5 @@ def parallel(process, raw_image_size_x, raw_image_size_y, sub_raw_img_size_x, su
     j_procs) = chunk_images(sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, padding_size, raw_image_with_padding,
                              gain_map_with_padding, offset_map_with_padding, error_map_with_padding, process)
     
-
-
-
 if __name__ == "_main_":
     main()
