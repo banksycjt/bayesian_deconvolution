@@ -39,7 +39,7 @@ def compute_full_log_posterior(object, shot_noise_image, inference, raw_image_wi
     
     log_likelihood = get_log_likelihood(object, shot_noise_image, inference, raw_image_with_padding, gain_map_with_padding, offset_map_with_padding,
                        error_map_with_padding, raw_img_size_x,raw_img_size_y)
-    log_prior = get_log_prior(object, inference, object, modulation_transfer_function_vectorized, raw_image_size_x, raw_image_size_y)
+    log_prior = get_log_prior(object, inference, modulation_transfer_function_vectorized, raw_image_size_x, raw_image_size_y)
     log_posterior = log_likelihood + log_prior
     
     return log_posterior

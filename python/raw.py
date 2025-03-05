@@ -142,9 +142,9 @@ def input_data(raw_image_path):
 
 def get_camera_calibration_data(gain, offset, noise, raw_image_size_x, raw_image_size_y):
 
-    offset_map = offset * np.ones(raw_image_size_x, raw_image_size_y)
-    gain_map = gain * np.ones(raw_image_size_x, raw_image_size_y)
-    error_map = noise * np.ones(raw_image_size_x, raw_image_size_y)
+    offset_map = offset * np.ones((raw_image_size_x, raw_image_size_y))
+    gain_map = gain * np.ones((raw_image_size_x, raw_image_size_y))
+    error_map = noise * np.ones((raw_image_size_x, raw_image_size_y))
 
     return offset_map, error_map, gain_map
 
@@ -152,10 +152,10 @@ def add_padding_reflective_BC(input_img, inference):
 
     padding_size = inference.padding_size
     input_img = np.array(input_img)
-    size_x = np.size(input_img)[0]
-    size_y = np.size(input_img)[1]
+    size_x = np.shape(input_img)[0]
+    size_y = np.shape(input_img)[1]
     
-    img = np.zeros(3*size_x, 3*size_y)
+    img = np.zeros((3*size_x, 3*size_y))
     img[size_x:-size_x, size_y:-size_y] = input_img 
     img[:size_x, size_y:-size_y]= np.flip(input_img,0)
     img[-size_x:, size_y:-size_y]= np.flip(input_img,0)
@@ -168,8 +168,8 @@ def add_padding_reflective_BC(input_img, inference):
     return img[size_x-padding_size:-size_x+padding_size, size_y-padding_size:-size_y+padding_size]
 
 def apply_reflective_BC_object(object, intermediate_img, padding_size):
-    size_x = np.size(object)[0] - 2*padding_size
-    size_y = np.size(object)[1] - 2*padding_size
+    size_x = np.shape(object)[0] - 2*padding_size
+    size_y = np.shape(object)[1] - 2*padding_size
 
     object_padding = object[padding_size:-padding_size, padding_size:-padding_size]
     
@@ -189,8 +189,8 @@ def apply_reflective_BC_object(object, intermediate_img, padding_size):
 
 def apply_reflective_BC_shot(shot_noise_image, intermediate_img, padding_size):
     
-    size_x = np.size(shot_noise_image)[1] - 2*padding_size
-    size_y = np.size(shot_noise_image)[2] - 2*padding_size
+    size_x = np.shape(shot_noise_image)[1] - 2*padding_size
+    size_y = np.shape(shot_noise_image)[2] - 2*padding_size
     shot_noise_padding = shot_noise_image[padding_size:-padding_size, padding_size:-padding_size]
     
     intermediate_img[size_x:-size_x, size_y:-size_y] = shot_noise_padding 
@@ -732,7 +732,7 @@ def sampler(psf_typ0, abbe_diffraction_limit, physical_pixel_size, padding_size,
     iFFT_var = np.zeros(2*padding_size+1, 2*padding_size+1)
     img_ij = np.zeros(2*padding_size+1, 2*padding_size+1)
     img_ij_abs = np.zeros(2*padding_size+1, 2*padding_size+1)
-    mod_fft_img_ij = np.zeros(np.size(modulation_transfer_function_ij_vectorized)[0]) 
+    mod_fft_img_ij = np.zeros(np.size(modulation_transfer_function_ij_vectorized)) 
 	##end
        
     im = np.zeros(n_procs_per_dim_x)

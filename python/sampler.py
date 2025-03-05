@@ -1,6 +1,7 @@
-from numpy import zeros, random, ceil, abs, median, int64
+from numpy import zeros, random, ceil, abs, median, int64, size, arange, exp
 from reflective_BC import apply_reflective_BC_object, apply_reflective_BC_shot
 from global_posterior import compute_full_log_posterior
+from multiprocessing import Pool
 
 def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size, median_photon_count, raw_img_size_x, raw_img_size_y, 
             sub_raw_img_size_x, sub_raw_img_size_y, n_procs_per_dim_x, n_procs_per_dim_y, chain_burn_in_period, 
@@ -42,23 +43,23 @@ def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size,
     n_accepted = 0
     temperature = 0.0
     
-    sub_object = np.zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
-    sub_shot_noise_img = np.zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
+    sub_object = zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
+    sub_shot_noise_img = zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
 
 	# Arrays to store intermediate variables
-    mean_img_ij = np.zeros(padding_size+1, padding_size+1)
-    proposed_mean_img_ij = np.zeros(padding_size+1, padding_size+1)
-    FFT_var = np.zeros(2*padding_size+1, 2*padding_size+1)
-    iFFT_var = np.zeros(2*padding_size+1, 2*padding_size+1)
-    img_ij = np.zeros(2*padding_size+1, 2*padding_size+1)
-    img_ij_abs = np.zeros(2*padding_size+1, 2*padding_size+1)
-    mod_fft_img_ij = np.zeros(np.size(modulation_transfer_function_ij_vectorized)[0]) 
+    mean_img_ij = zeros(padding_size+1, padding_size+1)
+    proposed_mean_img_ij = zeros(padding_size+1, padding_size+1)
+    FFT_var = zeros(2*padding_size+1, 2*padding_size+1)
+    iFFT_var = zeros(2*padding_size+1, 2*padding_size+1)
+    img_ij = zeros(2*padding_size+1, 2*padding_size+1)
+    img_ij_abs = zeros(2*padding_size+1, 2*padding_size+1)
+    mod_fft_img_ij = zeros(size(modulation_transfer_function_ij_vectorized)) 
 	##end
        
-    im = np.zeros(n_procs_per_dim_x)
-    ip = np.zeros(n_procs_per_dim_x)
-    jm = np.zeros(n_procs_per_dim_y)
-    jp = np.zeros(n_procs_per_dim_y)
+    im = zeros(n_procs_per_dim_x)
+    ip = zeros(n_procs_per_dim_x)
+    jm = zeros(n_procs_per_dim_y)
+    jp = zeros(n_procs_per_dim_y)
 
     for i in range(n_procs_per_dim_x):
         im[i+1] = padding_size + i*sub_raw_img_size_x + 1
@@ -72,15 +73,29 @@ def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size,
     n_accept = 0
     temperature = 0.0
     
-    for draw in np.arange(2, total_draws+1):
+    for draw in arange(2, total_draws+1):
         if draw > chain_burn_in_period:
-            temperature = 1.0 + (annealing_starting_temperature-1.0)*np.exp(-((draw-chain_burn_in_period-1) % annealing_frequency)/annealing_time_constant)
+            temperature = 1.0 + (annealing_starting_temperature-1.0)*exp(-((draw-chain_burn_in_period-1) % annealing_frequency)
+                                                                         /annealing_time_constant)
         elif draw < chain_burn_in_period:
-            temperature = 1.0 + (chain_starting_temperature-1.0)*np.exp(-((draw-1) % chain_burn_in_period)/chain_time_constant)
+            temperature = 1.0 + (chain_starting_temperature-1.0)*exp(-((draw-1) % chain_burn_in_period)/chain_time_constant)
             
         print(draw)
         print(temperature)
 
+        data_list = []
+    for i in range(12):
+        data = (i+1, raw_image_size_x, raw_image_size_y, sub_raw_img_size_x, sub_raw_img_size_y, inference, optical_system, camera, 
+                raw_image_with_padding, gain_map_with_padding, offset_map_with_padding, error_map_with_padding)
+        data_list.append(data)
+        
+
+    print('concurrent:') 
+    pool = Pool(12)  # 创建拥有12个进程数量的进程池
+    # testFL:要处理的数据列表，run：处理testFL列表中数据的函数
+    pool.map(parallel, arg = data_list)
+    pool.close()  # 关闭进程池，不再接受新的进程
+    pool.join()  # 主进程阻塞等待子进程的退出
 		##@everywhere workers() begin
         sub_object = object[im_raw:ip_raw, jm_raw:jp_raw]
         sub_shot_noise_img = shot_noise_image[im_raw:ip_raw, jm_raw:jp_raw]
@@ -97,6 +112,7 @@ def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size,
             else:
                 sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood_MLE(temperature,  sub_object,  sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
 											FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
+        ##end
         n_accept = 0
         for i in range(n_procs_per_dim_x):
             for j in range(n_procs_per_dim_y):
@@ -138,3 +154,4 @@ def sampler(psf_type, abbe_diffraction_limit, physical_pixel_size, padding_size,
         if draw % plotting_frequency == 0:
        		plot_data(draw, object, mean_object, shot_noise_image, mcmc_log_posterior)
  
+def sub_sampler()
