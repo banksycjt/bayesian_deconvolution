@@ -5,7 +5,7 @@ import numpy as np
 
 # 自定义对数概率密度函数
 def custom_logp(x, y):
-    return -x**2 - y**2
+    return -x*2 - y*2
 
 def main():
     # 定义 PyMC 模型
