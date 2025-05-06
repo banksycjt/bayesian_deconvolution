@@ -60,18 +60,16 @@ function sampler()
 	
 	shot_noise_image::Matrix{Float64} = 
 		zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
-    	shot_noise_image[padding_size+1:end-padding_size, 
-    		padding_size+1:end-padding_size] .= 
- 			Int64.(ceil.(abs.((input_raw_image .- median(offset_map_with_padding)) ./ 
-					  (median(gain_map_with_padding)))))
+    shot_noise_image[padding_size+1:end-padding_size, padding_size+1:end-padding_size] .= 
+ 		Int64.(ceil.(abs.((input_raw_image .- median(offset_map_with_padding)) 
+		./ (median(gain_map_with_padding)))))
 
 	intermediate_img::Matrix{Float64} = zeros(3*raw_img_size_x, 3*raw_img_size_y)
 	apply_reflective_BC_object!(object, intermediate_img)
 	apply_reflective_BC_shot!(shot_noise_image, intermediate_img)
 
 	mcmc_log_posterior::Vector{Float64} = zeros(total_draws)
-    	mcmc_log_posterior[draw] =
-    				compute_full_log_posterior(object, shot_noise_image)
+    mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image)
 
 	averaging_counter::Float64 = 0.0
  
@@ -79,8 +77,10 @@ function sampler()
 		n_accepted::Int64 = 0
 		temperature::Float64 = 0.0
 
-		sub_object::Matrix{Float64} = zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
- 		sub_shot_noise_img::Matrix{Float64} = zeros(sub_raw_img_size_x+2*padding_size, sub_raw_img_size_y+2*padding_size)
+		sub_object::Matrix{Float64} = zeros(sub_raw_img_size_x+2*padding_size, 
+		sub_raw_img_size_y+2*padding_size)
+ 		sub_shot_noise_img::Matrix{Float64} = zeros(sub_raw_img_size_x+2*padding_size, 
+		sub_raw_img_size_y+2*padding_size)
 
 		# Arrays to store intermediate variables
  		mean_img_ij = zeros(Float64, padding_size+1, padding_size+1)

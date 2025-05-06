@@ -1,6 +1,4 @@
 function get_log_prior(object::Matrix{Float64})
-
-
  	val_range_x = collect(padding_size+1:1:padding_size+raw_img_size_x)
  	val_range_y = collect(padding_size+1:1:padding_size+raw_img_size_y)
  	mod_fft_image = vec(abs.(fftshift(fft(ifftshift(object))))[val_range_x, val_range_y]) .+ eps()
