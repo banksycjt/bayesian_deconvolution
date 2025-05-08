@@ -11,19 +11,17 @@ function log_Dirichlet(x::Vector{Float64}, a::Vector{Float64})
 	z::Float64 = sum( (a .- 1.0)  .* log.(x)) - log_Beta(a)
 	return z
 end
+
 function log_Dirichlet_MTF(x::Vector{Float64})
 	x .= MTF_minus_one .* log.(x)
 	z::Float64 = sum(x) - log_Beta_MTF
 	return z
 end
 
-function get_log_likelihood_ij(i::Int64, j::Int64,
-				mean_img_ij::Matrix{Float64},
-				shot_noise_img_ij)
+function get_log_likelihood_ij(i::Int64, j::Int64, mean_img_ij::Matrix{Float64},shot_noise_img_ij)
 
 	i_minus::Int64 = 1
 	i_plus::Int64 = padding_size+1
-
 
 	j_minus::Int64 = 1
 	j_plus::Int64 = padding_size+1
@@ -36,16 +34,11 @@ function get_log_likelihood_ij(i::Int64, j::Int64,
  		end
  	end
 
-
 	return log_likelihood 
 end
 
-
-function get_log_prior_ij!(FFT_var::Matrix{ComplexF64},
-			img_ij::Matrix{ComplexF64},
-			img_ij_abs::Matrix{Float64},
-			mod_fft_img_ij::Vector{Float64},
-			i::Int64, j::Int64)
+function get_log_prior_ij!(FFT_var::Matrix{ComplexF64}, img_ij::Matrix{ComplexF64},
+	img_ij_abs::Matrix{Float64}, mod_fft_img_ij::Vector{Float64}, i::Int64, j::Int64)
 
    	fftshift!(img_ij, FFT_var)
 	img_ij_abs .= abs.(img_ij) 
@@ -55,32 +48,23 @@ function get_log_prior_ij!(FFT_var::Matrix{ComplexF64},
 end
 
 # The following Gibbs sampler computes likelihood for the neighborhood only.
-function sample_object_neighborhood!(temperature::Float64,
-				object::Matrix{Float64},
-				shot_noise_image::Matrix{Float64},
-				mean_img_ij::Matrix{Float64},
-				proposed_mean_img_ij::Matrix{Float64},
-				FFT_var::Matrix{ComplexF64},
-				iFFT_var::Matrix{ComplexF64},
-				img_ij::Matrix{ComplexF64},
-				img_ij_abs::Matrix{Float64},
-				mod_fft_img_ij::Vector{Float64},
-				n_accepted::Int64)
+function sample_object_neighborhood!(temperature::Float64, object::Matrix{Float64}, 
+	shot_noise_image::Matrix{Float64}, mean_img_ij::Matrix{Float64}, 
+	proposed_mean_img_ij::Matrix{Float64}, FFT_var::Matrix{ComplexF64},
+	iFFT_var::Matrix{ComplexF64}, img_ij::Matrix{ComplexF64}, img_ij_abs::Matrix{Float64},
+	mod_fft_img_ij::Vector{Float64}, n_accepted::Int64)
 
 	for j in padding_size+1:padding_size+sub_img_size_y
 		for i in padding_size+1:padding_size+sub_img_size_x
 
 			old_value::Float64 = object[i, j]
-
-   			shot_noise_img_ij = view(shot_noise_image, 
-    					i - half_padding_size:i + half_padding_size, 
-    					j - half_padding_size:j + half_padding_size)
-
-
-  			obj_ij = view(object, 
-  				i - padding_size:i + padding_size, 
-  				j - padding_size:j + padding_size)
-     			ifftshift!(img_ij, obj_ij)
+			shot_noise_img_ij = view(shot_noise_image, i - half_padding_size:i + half_padding_size, 
+			j - half_padding_size:j + half_padding_size)
+			
+			obj_ij = view(object, i - padding_size:i + padding_size, 
+  			j - padding_size:j + padding_size)
+     		
+			ifftshift!(img_ij, obj_ij)
   			mul!(FFT_var, fft_plan, img_ij)
 
 			old_log_prior::Float64 = 

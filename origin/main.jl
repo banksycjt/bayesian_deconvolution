@@ -57,7 +57,6 @@ function sampler()
 		zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
 	mean_object::Matrix{Float64} =
 	 	zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
-	
 	shot_noise_image::Matrix{Float64} = 
 		zeros(raw_img_size_x+2*padding_size, raw_img_size_y+2*padding_size)
     shot_noise_image[padding_size+1:end-padding_size, padding_size+1:end-padding_size] .= 
@@ -118,12 +117,10 @@ function sampler()
 
 		if draw > chain_burn_in_period
 			temperature = 1.0 + (annealing_starting_temperature-1.0)*
-					exp(-((draw-chain_burn_in_period-1) % 
-					      annealing_frequency)/annealing_time_constant)
+					exp(-((draw-chain_burn_in_period-1) % annealing_frequency)/annealing_time_constant)
 		elseif draw < chain_burn_in_period
-       			temperature = 1.0 + (chain_starting_temperature-1.0)*
-					exp(-((draw-1) % 
-					      chain_burn_in_period)/chain_time_constant)
+       		temperature = 1.0 + (chain_starting_temperature-1.0)*
+					exp(-((draw-1) % chain_burn_in_period)/chain_time_constant)
 		end
 
 		@show draw
@@ -142,32 +139,14 @@ function sampler()
 
 			if i_procs + j_procs < draw+1
 				if draw > chain_burn_in_period
-					sub_object, sub_shot_noise_img, n_accepted =
-							sample_object_neighborhood!(temperature, 
-											sub_object, 
-											sub_shot_noise_img,
-											mean_img_ij,
-											proposed_mean_img_ij,
-											FFT_var,
-											iFFT_var,
-											img_ij,
- 											img_ij_abs,
-											mod_fft_img_ij,
-											n_accepted)
+					sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood!(
+						temperature, sub_object, sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
+						FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
 				else
 
-					sub_object, sub_shot_noise_img, n_accepted =
-							sample_object_neighborhood_MLE!(temperature, 
-											sub_object, 
-											sub_shot_noise_img,
-											mean_img_ij,
-											proposed_mean_img_ij,
-											FFT_var,
-											iFFT_var,
-											img_ij,
- 											img_ij_abs,
-											mod_fft_img_ij,
-											n_accepted)
+					sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood_MLE!(
+						temperature, sub_object, sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
+						FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
 
 				end
 			end

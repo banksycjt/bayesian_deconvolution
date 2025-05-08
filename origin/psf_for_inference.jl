@@ -15,8 +15,7 @@ if psf_type == "airy_disk"
 	end
 	for j in 1:2*padding_size+1
 		for i in 1:2*padding_size+1
-			x_e::Vector{Float64} = [grid_physical_1D_ij[i],
-							grid_physical_1D_ij[j]]
+			x_e::Vector{Float64} = [grid_physical_1D_ij[i], grid_physical_1D_ij[j]]
 			psf_on_grid_ij[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
 		end
 	end
@@ -50,8 +49,7 @@ if psf_type == "airy_disk"
 
 elseif psf_type == "gaussian"
 	function incoherent_PSF(x_c::Vector{Float64}, x_e::Vector{Float64})
-		return exp(-norm(x_c-x_e)^2/(2.0*sigma^2)) /
-					(sqrt(2.0*pi) * sigma)^(size(x_e)[1])
+		return exp(-norm(x_c-x_e)^2/(2.0*sigma^2)) / (sqrt(2.0*pi) * sigma)^(size(x_e)[1])
 	end
 	for j in 1:2*padding_size+1
 		for i in 1:2*padding_size+1
@@ -60,8 +58,7 @@ elseif psf_type == "gaussian"
 			psf_on_grid_ij[i, j] =  incoherent_PSF([0.0, 0.0], x_e)
 		end
 	end
-	const FFT_point_spread_function_ij::Matrix{ComplexF64} = 
-		fft(ifftshift(psf_on_grid_ij)) .* dx^2
+	const FFT_point_spread_function_ij::Matrix{ComplexF64} = fft(ifftshift(psf_on_grid_ij)) .* dx^2
 
 end
 
