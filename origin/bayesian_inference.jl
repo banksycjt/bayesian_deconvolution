@@ -61,8 +61,7 @@ function sample_object_neighborhood!(temperature::Float64, object::Matrix{Float6
 			shot_noise_img_ij = view(shot_noise_image, i - half_padding_size:i + half_padding_size, 
 			j - half_padding_size:j + half_padding_size)
 			
-			obj_ij = view(object, i - padding_size:i + padding_size, 
-  			j - padding_size:j + padding_size)
+			obj_ij = view(object, i - padding_size:i + padding_size, j - padding_size:j + padding_size)
      		
 			ifftshift!(img_ij, obj_ij)
   			mul!(FFT_var, fft_plan, img_ij)
