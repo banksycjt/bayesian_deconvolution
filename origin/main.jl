@@ -143,11 +143,9 @@ function sampler()
 						temperature, sub_object, sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
 						FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
 				else
-
-					sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood_MLE!(
+ 					sub_object, sub_shot_noise_img, n_accepted = sample_object_neighborhood_MLE!(
 						temperature, sub_object, sub_shot_noise_img, mean_img_ij, proposed_mean_img_ij,
 						FFT_var, iFFT_var, img_ij, img_ij_abs, mod_fft_img_ij, n_accepted)
-
 				end
 			end
 
@@ -160,15 +158,13 @@ function sampler()
  				procs_id::Int64 = ((j-1)*n_procs_per_dim_x+(i-1)+2)
     
  				sub_img = view((@fetchfrom procs_id sub_object), :, :)
- 				object[im[i]:ip[i], jm[j]:jp[j]] .= 
- 						sub_img[padding_size+1:end-padding_size,
-    							padding_size+1:end-padding_size]
+ 				object[im[i]:ip[i], jm[j]:jp[j]] .= sub_img[padding_size+1:end-padding_size, 
+															padding_size+1:end-padding_size]
  
     
 				sub_img = view((@fetchfrom procs_id sub_shot_noise_img), :, :)	
- 				shot_noise_image[im[i]:ip[i], jm[j]:jp[j]] .= 
- 						sub_img[padding_size+1:end-padding_size,
-    							padding_size+1:end-padding_size]
+ 				shot_noise_image[im[i]:ip[i], jm[j]:jp[j]] .= sub_img[padding_size+1:end-padding_size,
+    																  padding_size+1:end-padding_size]
  
     			accepted::Int64 = @fetchfrom procs_id n_accepted
     			n_accept += accepted
@@ -182,14 +178,12 @@ function sampler()
     	println("acceptance ratio = ", n_accept/ (raw_img_size_x * raw_img_size_y))	
     	flush(stdout);
 
-    	mcmc_log_posterior[draw] =
-    					compute_full_log_posterior(object, shot_noise_image)
+    	mcmc_log_posterior[draw] = compute_full_log_posterior(object, shot_noise_image)
 
 		if (draw == chain_burn_in_period) || ((draw > chain_burn_in_period) &&
-			((draw - chain_burn_in_period) % 
-			 annealing_frequency > annealing_burn_in_period ||
-			 (draw - chain_burn_in_period) % annealing_frequency == 0) &&
-			((draw - chain_burn_in_period) % averaging_frequency == 0))
+			((draw - chain_burn_in_period) %  annealing_frequency > annealing_burn_in_period ||
+			 (draw - chain_burn_in_period) % annealing_frequency == 0) 
+			 && ((draw - chain_burn_in_period) % averaging_frequency == 0))
 
   			averaging_counter += 1.0
   			sum_object .+= object
@@ -200,10 +194,8 @@ function sampler()
   			flush(stdout);
  
  
-       		save_data(draw, mcmc_log_posterior,
-          				object, shot_noise_image,
-          				mean_object,
-          				averaging_counter)
+       		save_data(draw, mcmc_log_posterior, object, shot_noise_image, mean_object,
+          			  averaging_counter)
 		end
 
 		if draw % plotting_frequency == 0 

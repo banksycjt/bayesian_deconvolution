@@ -29,8 +29,7 @@ function get_log_likelihood_ij(i::Int64, j::Int64, mean_img_ij::Matrix{Float64},
  	log_likelihood::Float64 = 0.0 
  	for jj in j_minus:j_plus
  		for ii in i_minus:i_plus
-			log_likelihood += logpdf(Poisson(mean_img_ij[ii, jj] + eps()), 
-						 	shot_noise_img_ij[ii, jj])
+			log_likelihood += logpdf(Poisson(mean_img_ij[ii, jj] + eps()), shot_noise_img_ij[ii, jj])
  		end
  	end
 
@@ -64,61 +63,42 @@ function sample_object_neighborhood!(temperature::Float64, object::Matrix{Float6
 			obj_ij = view(object, i - padding_size:i + padding_size, j - padding_size:j + padding_size)
      		
 			ifftshift!(img_ij, obj_ij)
-  			mul!(FFT_var, fft_plan, img_ij)
+  			mul!(FFT_var, fft_plan, img_ij) # FFT_var is fft of img_ij
 
-			old_log_prior::Float64 = 
-     				get_log_prior_ij!(FFT_var, 
-   						img_ij, 
-    					img_ij_abs, 
-    					mod_fft_img_ij, 
-    					i, j)  
+			old_log_prior::Float64 = get_log_prior_ij!(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, i, j)  
 
  			# FFT_var gets modified in the following function
-    		mean_img_ij .= get_widefield_image_ij!(mean_img_ij, 
-    					FFT_var,
-    					iFFT_var,
-    					img_ij,
-      					i, j)
+			# return the img_ij convolves with psf in size of padding_size* padding_size
+    		mean_img_ij .= get_widefield_image_ij!(mean_img_ij, FFT_var, iFFT_var, img_ij, i, j) 
 
- 			old_log_likelihood::Float64 = get_log_likelihood_ij(i, j,
- 							mean_img_ij, shot_noise_img_ij)
+ 			old_log_likelihood::Float64 = get_log_likelihood_ij(i, j, mean_img_ij, shot_noise_img_ij)
  
  			old_log_posterior::Float64 = old_log_likelihood + old_log_prior
  			old_jac::Float64 = log(old_value)
 
- 			proposed_value::Float64 = rand(rng, Normal(log(old_value), 
-							covariance_object), 1)[1]
+ 			proposed_value::Float64 = rand(rng, Normal(log(old_value), covariance_object), 1)[1]
 			proposed_value = exp.(proposed_value)
  			object[i, j] = proposed_value
 
-			proposed_obj_ij = view(object, 
-    				i - padding_size:i + padding_size, 
-    				j - padding_size:j + padding_size)
-       			ifftshift!(img_ij, proposed_obj_ij)
-    			mul!(FFT_var, fft_plan, img_ij)
+			proposed_obj_ij = view(object, i - padding_size:i + padding_size,
+										   j - padding_size:j + padding_size)
+       		ifftshift!(img_ij, proposed_obj_ij)
+    		mul!(FFT_var, fft_plan, img_ij) # FFT_var is fft of img_ij
 
-			proposed_log_prior::Float64 = 
-       				get_log_prior_ij!(FFT_var, 
-     						img_ij, 
-      						img_ij_abs, 
-      						mod_fft_img_ij, 
-      						i, j)  
+			proposed_log_prior::Float64 = get_log_prior_ij!(FFT_var, img_ij, img_ij_abs, mod_fft_img_ij, 
+      														i, j)  
 
-    		proposed_mean_img_ij .= get_widefield_image_ij!(proposed_mean_img_ij, 
-    					FFT_var,
-    					iFFT_var,
-    					img_ij,
-      					i, j)
+    		proposed_mean_img_ij .= get_widefield_image_ij!(proposed_mean_img_ij, FFT_var, iFFT_var,
+    														img_ij, i, j)
 
-  			proposed_log_likelihood::Float64 = get_log_likelihood_ij(i, j,
-  						proposed_mean_img_ij, shot_noise_img_ij)
+  			proposed_log_likelihood::Float64 = get_log_likelihood_ij(i, j, proposed_mean_img_ij, 
+																	 shot_noise_img_ij)
   
    			proposed_jac::Float64 = log(proposed_value)
    			proposed_log_posterior::Float64 = proposed_log_likelihood + proposed_log_prior
   
-  			log_hastings::Float64 = (1.0/temperature) *
-                          	(proposed_log_posterior - old_log_posterior) +
-  							proposed_jac - old_jac
+  			log_hastings::Float64 = (1.0/temperature) * (proposed_log_posterior - old_log_posterior) +
+  									proposed_jac - old_jac
 			log_rand::Float64 = log(rand(rng, Float64))
   
    			if log_hastings > log_rand
@@ -133,47 +113,32 @@ function sample_object_neighborhood!(temperature::Float64, object::Matrix{Float6
 			# Choose the central pixel in the mean image
 			# for expected photon count
 
-  			expected_photon_count::Float64 = mean_img_ij[
-  							half_padding_size+1, 
-  							half_padding_size+1]
+  			expected_photon_count::Float64 = mean_img_ij[half_padding_size+1,  half_padding_size+1]
   
-    		old_log_likelihood = logpdf(Normal(sub_gain_map[i, j]*
- 					shot_noise_image[i, j] +
- 					sub_offset_map[i, j],
- 					sub_error_map[i, j] .+ eps()),
-   					sub_raw_image[i, j])
+    		old_log_likelihood = logpdf(Normal(sub_gain_map[i, j]* shot_noise_image[i, j] + 
+								sub_offset_map[i, j], sub_error_map[i, j] .+ eps()), sub_raw_image[i, j])
   
- 			old_log_prior = logpdf(Poisson(expected_photon_count + eps()),
-    								shot_noise_image[i, j])
+ 			old_log_prior = logpdf(Poisson(expected_photon_count + eps()), shot_noise_image[i, j])
   
  			old_log_posterior = old_log_likelihood  + old_log_prior
    
-    			proposed_shot_noise_pixel::Float64 =
- 				rand(rng, Poisson(shot_noise_image[i, j] + eps()), 1)[1]
+    		proposed_shot_noise_pixel::Float64 = rand(rng, Poisson(shot_noise_image[i, j] + eps()), 1)[1]
   
-			new_log_likelihood = logpdf(Normal(sub_gain_map[i, j]*
-            			proposed_shot_noise_pixel +
-    					sub_offset_map[i, j], 
-   					sub_error_map[i, j] .+ eps()),
-   					sub_raw_image[i, j])
+			new_log_likelihood = logpdf(Normal(sub_gain_map[i, j]* proposed_shot_noise_pixel +
+    					sub_offset_map[i, j], sub_error_map[i, j] .+ eps()), sub_raw_image[i, j])
   
- 			new_log_prior = logpdf(Poisson(expected_photon_count + eps()),
-    						proposed_shot_noise_pixel)
+ 			new_log_prior = logpdf(Poisson(expected_photon_count + eps()), proposed_shot_noise_pixel)
   
  			new_log_posterior = new_log_likelihood  + new_log_prior
   
-  			log_forward_proposal_probability::Float64 = 
- 				logpdf(Poisson(shot_noise_image[i, j] + eps()),
-    									proposed_shot_noise_pixel)
+  			log_forward_proposal_probability::Float64 = logpdf(Poisson(shot_noise_image[i, j] + eps()),
+    					proposed_shot_noise_pixel)
   
-  			log_backward_proposal_probability::Float64 = 
- 					logpdf(Poisson(proposed_shot_noise_pixel + eps()),
-    									shot_noise_image[i, j])
+  			log_backward_proposal_probability::Float64 = logpdf(Poisson(proposed_shot_noise_pixel + eps()),
+    					shot_noise_image[i, j])
    
-			log_hastings = (1.0/temperature)*
-            			(new_log_posterior - old_log_posterior) +
-  						log_backward_proposal_probability -
-  						log_forward_proposal_probability
+			log_hastings = (1.0/temperature)* (new_log_posterior - old_log_posterior) +
+  						log_backward_proposal_probability - log_forward_proposal_probability
    
  			log_rand = log(rand(rng, Float64))
     		if log_hastings > log_rand
@@ -186,17 +151,11 @@ function sample_object_neighborhood!(temperature::Float64, object::Matrix{Float6
 	return object, shot_noise_image, n_accepted
 end
 
-function sample_object_neighborhood_MLE!(temperature::Float64,
-				object::Matrix{Float64},
-				shot_noise_image::Matrix{Float64},
-				mean_img_ij::Matrix{Float64},
-				proposed_mean_img_ij::Matrix{Float64},
-				FFT_var::Matrix{ComplexF64},
-				iFFT_var::Matrix{ComplexF64},
-				img_ij::Matrix{ComplexF64},
-				img_ij_abs::Matrix{Float64},
-				mod_fft_img_ij::Vector{Float64},
-				n_accepted::Int64)
+function sample_object_neighborhood_MLE!(temperature::Float64, object::Matrix{Float64}, 
+	shot_noise_image::Matrix{Float64}, mean_img_ij::Matrix{Float64}, 
+	proposed_mean_img_ij::Matrix{Float64}, FFT_var::Matrix{ComplexF64}, 
+	iFFT_var::Matrix{ComplexF64}, img_ij::Matrix{ComplexF64}, img_ij_abs::Matrix{Float64},
+	mod_fft_img_ij::Vector{Float64}, n_accepted::Int64)
 
 	for j in padding_size+1:padding_size+sub_img_size_y
 		for i in padding_size+1:padding_size+sub_img_size_x

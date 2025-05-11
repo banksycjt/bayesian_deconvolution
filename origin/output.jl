@@ -1,10 +1,5 @@
-function save_data(current_draw::Integer,
-    mcmc_log_posterior::Vector{Float64},
-    object::Matrix{Float64},
-    shot_noise_image::Matrix{Float64},
-    object_mean::Matrix{Float64},
-    averaging_counter::Float64)
-
+function save_data(current_draw::Integer, mcmc_log_posterior::Vector{Float64}, object::Matrix{Float64},
+    shot_noise_image::Matrix{Float64}, object_mean::Matrix{Float64}, averaging_counter::Float64)
 
 	grays = convert.(Gray{Float64}, 
 		object[padding_size+1:padding_size+raw_img_size_x, 
@@ -23,7 +18,8 @@ function save_data(current_draw::Integer,
 	return nothing
 end
 
-function plot_data(current_draw::Int64, object::Matrix{Float64}, mean_object::Matrix{Float64}, shot_noise_image::Matrix{Float64}, log_posterior::Vector{Float64})
+function plot_data(current_draw::Int64, object::Matrix{Float64}, mean_object::Matrix{Float64},
+				   shot_noise_image::Matrix{Float64}, log_posterior::Vector{Float64})
 
 	plot_object  = heatmap(view(object, 
 			padding_size+1:padding_size+raw_img_size_x, 
